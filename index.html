@@ -121,4 +121,163 @@
     }
 
     const { error } = await sb.from("reservations").insert({
+      car_id: carId,
+      user_id: me.userId,
+      user_name: me.displayName,
+      start_time: startISO,
+      end_time: endISO,
+      note: note.trim()
+    });
+    if(error) throw error;
+    return true;
+  }
 
+  async function cancelReservation(reservationId){
+    if(!confirm("この予約をキャンセルしますか？")) return false;
+
+    // 自分の予約だけ削除できるようにしておく（簡易ガード）
+    const { error } = await sb
+      .from("reservations")
+      .delete()
+      .eq("id", reservationId)
+      .eq("user_id", me.userId);
+
+    if(error){
+      alert("キャンセルできませんでした（自分の予約のみキャンセル可）");
+      return false;
+    }
+    return true;
+  }
+
+  function buildEvents(reservations){
+    // FullCalendarのeventに変換
+    return reservations.map(r => {
+      const isMine = (r.user_id === me.userId);
+      const title = isMine
+        ? `（自分）${r.note ? r.note : ""}`.trim()
+        : `${r.user_name}${r.note ? " / " + r.note : ""}`;
+
+      return {
+        id: r.id,
+        title,
+        start: r.start_time,
+        end: r.end_time,
+        extendedProps: {
+          user_id: r.user_id,
+          user_name: r.user_name,
+          note: r.note
+        }
+        // 色は指定しない（デフォルトのまま）
+      };
+    });
+  }
+
+  async function refetchCalendarEvents(){
+    if(!calendar) return;
+
+    const carId = getSelectedCarId();
+    const view = calendar.view;
+
+    const startISO = view.activeStart.toISOString();
+    const endISO = view.activeEnd.toISOString();
+
+    const reservations = await fetchReservations(carId, startISO, endISO);
+    const events = buildEvents(reservations);
+
+    calendar.removeAllEvents();
+    calendar.addEventSource(events);
+  }
+
+  function initCalendar(){
+    const el = document.getElementById("calendar");
+
+    calendar = new FullCalendar.Calendar(el, {
+      initialView: "timeGridWeek",
+      timeZone: "Asia/Tokyo",
+
+      headerToolbar: {
+        left: "prev,next today",
+        center: "title",
+        right: "timeGridDay,timeGridWeek"
+      },
+
+      // 15分単位
+      slotDuration: "00:15:00",
+      snapDuration: "00:15:00",
+
+      selectable: true,
+      selectMirror: true,
+
+      // 見た目の時間幅（必要なら調整）
+      slotMinTime: "06:00:00",
+      slotMaxTime: "22:00:00",
+
+      // 表示範囲が変わったら予約を取り直す
+      datesSet: async () => {
+        try { await refetchCalendarEvents(); }
+        catch(e){ console.error(e); alert("予約データの取得に失敗しました"); }
+      },
+
+      // 予約作成（ドラッグ選択）
+      select: async (info) => {
+        try{
+          const carId = getSelectedCarId();
+          // FullCalendarはDateをくれるのでISOで保存
+          const startISO = info.start.toISOString();
+          const endISO = info.end.toISOString();
+
+          if(info.start >= info.end){
+            calendar.unselect();
+            return;
+          }
+
+          const ok = await createReservation(carId, startISO, endISO);
+          calendar.unselect();
+          if(ok) await refetchCalendarEvents();
+        }catch(e){
+          console.error(e);
+          alert("予約に失敗しました（設定値やDBを確認）");
+          calendar.unselect();
+        }
+      },
+
+      // 予約クリック（自分の予約だけキャンセル許可）
+      eventClick: async (info) => {
+        const isMine = info.event.extendedProps.user_id === me.userId;
+        if(!isMine){
+          alert("他人の予約はキャンセルできません。");
+          return;
+        }
+        const ok = await cancelReservation(info.event.id);
+        if(ok) await refetchCalendarEvents();
+      }
+    });
+
+    calendar.render();
+  }
+
+  (async () => {
+    try{
+      const ok = await initLiff();
+      if(!ok) return;
+
+      await loadCars();
+
+      $("car").addEventListener("change", async ()=> {
+        try{ await refetchCalendarEvents(); } catch(e){ console.error(e); }
+      });
+
+      $("reloadBtn").addEventListener("click", async ()=> {
+        try{ await refetchCalendarEvents(); } catch(e){ console.error(e); }
+      });
+
+      initCalendar();
+    }catch(e){
+      console.error(e);
+      setStatus("初期化エラー：設定（LIFF/Supabase）を確認してください");
+      alert("初期化に失敗しました。コンソールを確認してください。");
+    }
+  })();
+</script>
+</body>
+</html>
