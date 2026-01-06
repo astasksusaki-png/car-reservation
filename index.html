@@ -9,16 +9,30 @@
     body{font-family:system-ui, -apple-system, "Segoe UI", sans-serif; margin:12px; line-height:1.5;}
     .topbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;}
     .badge{font-size:13px; color:#444;}
-    select, button{padding:10px; font-size:16px;}
+    select, button, input{padding:10px; font-size:16px;}
     #status{font-size:13px; color:#666;}
     .hint{font-size:12px; color:#666; margin:6px 0 10px;}
-    /* カレンダーがスマホで詰まるのを少し緩和 */
     .fc .fc-toolbar-title{font-size:18px;}
+
+    /* 予約モーダル */
+    .overlay{
+      position:fixed; inset:0; background:rgba(0,0,0,.45);
+      display:none; align-items:center; justify-content:center; padding:16px; z-index:9999;
+    }
+    .modal{
+      width:min(520px, 100%); background:#fff; border-radius:14px; padding:14px;
+      box-shadow:0 10px 30px rgba(0,0,0,.2);
+    }
+    .modal h3{margin:0 0 8px 0; font-size:18px;}
+    .modal .row{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+    .modal label{display:block; font-size:13px; color:#444; margin-top:10px;}
+    .modal textarea{width:100%; padding:10px; font-size:16px; margin-top:6px;}
+    .modal .actions{display:flex; gap:10px; justify-content:flex-end; margin-top:12px;}
+    .small{font-size:12px; color:#666;}
   </style>
 
   <!-- LIFF -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-
   <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
@@ -26,6 +40,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
 </head>
+
 <body>
   <div class="topbar">
     <b>社用車予約</b>
@@ -38,11 +53,38 @@
   </div>
 
   <div class="hint">
-    ・ドラッグで時間範囲を選択すると予約できます（15分単位）<br>
+    ・時間枠を<strong>タップ</strong>すると、開始→終了を<strong>15分刻み</strong>で選んで予約できます<br>
     ・自分の予約はクリックでキャンセルできます（他人の予約は不可）
   </div>
 
   <div id="calendar"></div>
+
+  <!-- 予約モーダル -->
+  <div id="overlay" class="overlay">
+    <div class="modal">
+      <h3>予約作成</h3>
+      <div id="modalDate" class="small"></div>
+
+      <div class="row">
+        <div>
+          <label>開始（15分刻み）</label>
+          <select id="startSel"></select>
+        </div>
+        <div>
+          <label>終了（15分刻み）</label>
+          <select id="endSel"></select>
+        </div>
+      </div>
+
+      <label>用途メモ（任意）</label>
+      <textarea id="note" rows="2" placeholder="例：顧客訪問、備品搬入など"></textarea>
+
+      <div class="actions">
+        <button id="cancelModalBtn">キャンセル</button>
+        <button id="saveModalBtn">予約する</button>
+      </div>
+    </div>
+  </div>
 
 <script>
   // ★ここをあなたの値に差し替え
@@ -57,6 +99,9 @@
   let me = { userId: null, displayName: null };
   let calendar = null;
 
+  // モーダル用状態
+  let modalState = { dateYmd: null, baseTime: null };
+
   function setStatus(text){ $("status").textContent = text; }
 
   async function initLiff(){
@@ -67,7 +112,6 @@
       liff.login();
       return false;
     }
-
     const profile = await liff.getProfile();
     me.userId = profile.userId;
     me.displayName = profile.displayName;
@@ -78,7 +122,6 @@
   async function loadCars(){
     const { data, error } = await sb.from("cars").select("*").order("id");
     if(error) throw error;
-
     $("car").innerHTML = data.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
   }
 
@@ -86,8 +129,76 @@
     return Number($("car").value);
   }
 
+  function pad2(n){ return String(n).padStart(2, "0"); }
+
+  function toYmd(dateObj){
+    const y = dateObj.getFullYear();
+    const m = pad2(dateObj.getMonth()+1);
+    const d = pad2(dateObj.getDate());
+    return `${y}-${m}-${d}`;
+  }
+
+  function buildTimeOptions(){
+    // 00:00 ～ 23:45（15分刻み）
+    const opts = [];
+    for(let h=0; h<24; h++){
+      for(let m=0; m<60; m+=15){
+        opts.push(`${pad2(h)}:${pad2(m)}`);
+      }
+    }
+    return opts;
+  }
+
+  function setSelectOptions(selectEl, options, selected){
+    selectEl.innerHTML = options.map(v =>
+      `<option value="${v}" ${v===selected ? "selected":""}>${v}</option>`
+    ).join("");
+  }
+
+  function openModal(dateObj){
+    const ymd = toYmd(dateObj);
+    modalState.dateYmd = ymd;
+
+    // タップしたスロットの時刻を丸めて開始候補にする
+    const h = dateObj.getHours();
+    const m = dateObj.getMinutes();
+    const roundedM = Math.floor(m / 15) * 15;
+    const startDefault = `${pad2(h)}:${pad2(roundedM)}`;
+
+    // 終了は開始+30分をデフォルト（15分刻み）
+    const startMinutes = h*60 + roundedM;
+    const endMinutes = Math.min(startMinutes + 30, 24*60);
+    const endH = Math.floor(endMinutes / 60);
+    const endM = endMinutes % 60;
+    const endDefault = (endMinutes >= 24*60) ? "24:00" : `${pad2(endH)}:${pad2(endM)}`;
+
+    const baseOptions = buildTimeOptions(); // 00:00～23:45
+    const endOptions = [...baseOptions, "24:00"]; // 終了は24:00も許可
+
+    setSelectOptions($("startSel"), baseOptions, startDefault);
+    setSelectOptions($("endSel"), endOptions, endDefault);
+
+    $("note").value = "";
+    $("modalDate").textContent = `${ymd}（車：${$("car").selectedOptions[0]?.textContent || ""}）`;
+    $("overlay").style.display = "flex";
+  }
+
+  function closeModal(){
+    $("overlay").style.display = "none";
+  }
+
+  function parseLocalISO(ymd, hhmm){
+    // hhmm が "24:00" の場合は翌日 00:00 として扱う
+    const [y, m, d] = ymd.split("-").map(Number);
+    let [hh, mm] = hhmm.split(":").map(Number);
+    let dt = new Date(y, m-1, d, hh, mm, 0, 0);
+    if(hhmm === "24:00"){
+      dt = new Date(y, m-1, d+1, 0, 0, 0, 0);
+    }
+    return dt.toISOString();
+  }
+
   async function fetchReservations(carId, startISO, endISO){
-    // 画面表示範囲の予約だけ取る
     const { data, error } = await sb
       .from("reservations")
       .select("id, car_id, user_id, user_name, start_time, end_time, note")
@@ -95,7 +206,6 @@
       .lt("start_time", endISO)
       .gt("end_time", startISO)
       .order("start_time", { ascending: true });
-
     if(error) throw error;
     return data;
   }
@@ -112,21 +222,19 @@
     return data.length > 0;
   }
 
-  async function createReservation(carId, startISO, endISO){
-    const note = prompt("用途メモ（任意）を入力してください：", "") ?? "";
+  async function createReservation(carId, startISO, endISO, note){
     const overlap = await hasOverlap(carId, startISO, endISO);
     if(overlap){
       alert("その時間帯は既に予約があります。別の車両か時間を変更してください。");
       return false;
     }
-
     const { error } = await sb.from("reservations").insert({
       car_id: carId,
       user_id: me.userId,
       user_name: me.displayName,
       start_time: startISO,
       end_time: endISO,
-      note: note.trim()
+      note: (note || "").trim()
     });
     if(error) throw error;
     return true;
@@ -135,7 +243,6 @@
   async function cancelReservation(reservationId){
     if(!confirm("この予約をキャンセルしますか？")) return false;
 
-    // 自分の予約だけ削除できるようにしておく（簡易ガード）
     const { error } = await sb
       .from("reservations")
       .delete()
@@ -150,7 +257,6 @@
   }
 
   function buildEvents(reservations){
-    // FullCalendarのeventに変換
     return reservations.map(r => {
       const isMine = (r.user_id === me.userId);
       const title = isMine
@@ -167,7 +273,6 @@
           user_name: r.user_name,
           note: r.note
         }
-        // 色は指定しない（デフォルトのまま）
       };
     });
   }
@@ -194,6 +299,14 @@
     calendar = new FullCalendar.Calendar(el, {
       initialView: "timeGridWeek",
       timeZone: "Asia/Tokyo",
+      locale: "ja",
+
+      // Day/Week を日本語に
+      buttonText: {
+        today: "今日",
+        timeGridDay: "日",
+        timeGridWeek: "週"
+      },
 
       headerToolbar: {
         left: "prev,next today",
@@ -205,43 +318,39 @@
       slotDuration: "00:15:00",
       snapDuration: "00:15:00",
 
-      selectable: true,
-      selectMirror: true,
+      // 00:00〜24:00 表示
+      slotMinTime: "00:00:00",
+      slotMaxTime: "24:00:00",
 
-      // 見た目の時間幅（必要なら調整）
-      slotMinTime: "06:00:00",
-      slotMaxTime: "22:00:00",
+      // 24時間表記（軸ラベル）
+      slotLabelFormat: {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      },
+      // 24時間表記（イベント表示）
+      eventTimeFormat: {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      },
 
-      // 表示範囲が変わったら予約を取り直す
+      // ドラッグ選択は使わない
+      selectable: false,
+
+      // 表示範囲が変わったら取り直し
       datesSet: async () => {
         try { await refetchCalendarEvents(); }
         catch(e){ console.error(e); alert("予約データの取得に失敗しました"); }
       },
 
-      // 予約作成（ドラッグ選択）
-      select: async (info) => {
-        try{
-          const carId = getSelectedCarId();
-          // FullCalendarはDateをくれるのでISOで保存
-          const startISO = info.start.toISOString();
-          const endISO = info.end.toISOString();
-
-          if(info.start >= info.end){
-            calendar.unselect();
-            return;
-          }
-
-          const ok = await createReservation(carId, startISO, endISO);
-          calendar.unselect();
-          if(ok) await refetchCalendarEvents();
-        }catch(e){
-          console.error(e);
-          alert("予約に失敗しました（設定値やDBを確認）");
-          calendar.unselect();
-        }
+      // ✅ タップした時刻を起点に「開始→終了」を選ぶモーダルを出す
+      dateClick: (info) => {
+        // timeGrid系で時間があるクリックのみ想定
+        openModal(info.date);
       },
 
-      // 予約クリック（自分の予約だけキャンセル許可）
+      // 自分の予約だけキャンセル
       eventClick: async (info) => {
         const isMine = info.event.extendedProps.user_id === me.userId;
         if(!isMine){
@@ -255,6 +364,35 @@
 
     calendar.render();
   }
+
+  // モーダル操作
+  $("cancelModalBtn").addEventListener("click", closeModal);
+
+  $("saveModalBtn").addEventListener("click", async () => {
+    try{
+      const carId = getSelectedCarId();
+      const startStr = $("startSel").value; // HH:MM
+      const endStr = $("endSel").value;     // HH:MM or 24:00
+      const note = $("note").value;
+
+      const startISO = parseLocalISO(modalState.dateYmd, startStr);
+      const endISO = parseLocalISO(modalState.dateYmd, endStr);
+
+      if(new Date(startISO) >= new Date(endISO)){
+        alert("終了は開始より後にしてください。");
+        return;
+      }
+
+      const ok = await createReservation(carId, startISO, endISO, note);
+      if(ok){
+        closeModal();
+        await refetchCalendarEvents();
+      }
+    }catch(e){
+      console.error(e);
+      alert("予約に失敗しました（設定値やDBを確認）");
+    }
+  });
 
   (async () => {
     try{
