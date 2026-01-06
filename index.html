@@ -14,6 +14,14 @@
     .hint{font-size:12px; color:#666; margin:6px 0 10px;}
     .fc .fc-toolbar-title{font-size:18px;}
 
+    /* ヘッダが重なるのを避ける */
+    .fc .fc-col-header-cell-cushion{
+      white-space: normal;
+      font-size: 12px;
+      line-height: 1.2;
+      padding: 4px 2px;
+    }
+
     /* 予約モーダル */
     .overlay{
       position:fixed; inset:0; background:rgba(0,0,0,.45);
@@ -35,7 +43,6 @@
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
   <!-- FullCalendar（CDN） -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
@@ -54,6 +61,7 @@
 
   <div class="hint">
     ・時間枠を<strong>タップ</strong>すると、開始→終了を<strong>15分刻み</strong>で選んで予約できます<br>
+    ・終日（All-Day）は<strong>終日</strong>表示。ここをクリックすると <strong>00:00〜24:00</strong> を選択できます<br>
     ・自分の予約はクリックでキャンセルできます（他人の予約は不可）
   </div>
 
@@ -87,7 +95,7 @@
   </div>
 
 <script>
-  // ★ここをあなたの値に差し替え
+  // ✅ あなたの値をセット済み
   const LIFF_ID = "2008829976-rJa7ANlR";
   const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
@@ -100,7 +108,7 @@
   let calendar = null;
 
   // モーダル用状態
-  let modalState = { dateYmd: null, baseTime: null };
+  let modalState = { dateYmd: null };
 
   function setStatus(text){ $("status").textContent = text; }
 
@@ -155,31 +163,59 @@
     ).join("");
   }
 
+  function roundTo15(dateObj){
+    // ✅ クリック時刻を15分単位に丸める（ズレ防止）
+    const d = new Date(dateObj);
+    d.setSeconds(0, 0);
+    const m = d.getMinutes();
+    const rounded = Math.round(m / 15) * 15;
+    if(rounded === 60){
+      d.setHours(d.getHours() + 1);
+      d.setMinutes(0);
+    }else{
+      d.setMinutes(rounded);
+    }
+    return d;
+  }
+
   function openModal(dateObj){
     const ymd = toYmd(dateObj);
     modalState.dateYmd = ymd;
 
-    // タップしたスロットの時刻を丸めて開始候補にする
     const h = dateObj.getHours();
     const m = dateObj.getMinutes();
-    const roundedM = Math.floor(m / 15) * 15;
-    const startDefault = `${pad2(h)}:${pad2(roundedM)}`;
+    const startDefault = `${pad2(h)}:${pad2(m)}`;
 
-    // 終了は開始+30分をデフォルト（15分刻み）
-    const startMinutes = h*60 + roundedM;
+    // 終了は開始+30分
+    const startMinutes = h*60 + m;
     const endMinutes = Math.min(startMinutes + 30, 24*60);
     const endH = Math.floor(endMinutes / 60);
     const endM = endMinutes % 60;
     const endDefault = (endMinutes >= 24*60) ? "24:00" : `${pad2(endH)}:${pad2(endM)}`;
 
-    const baseOptions = buildTimeOptions(); // 00:00～23:45
-    const endOptions = [...baseOptions, "24:00"]; // 終了は24:00も許可
+    const baseOptions = buildTimeOptions();      // 00:00～23:45
+    const endOptions = [...baseOptions, "24:00"]; // 終了は24:00も可
 
     setSelectOptions($("startSel"), baseOptions, startDefault);
     setSelectOptions($("endSel"), endOptions, endDefault);
 
     $("note").value = "";
     $("modalDate").textContent = `${ymd}（車：${$("car").selectedOptions[0]?.textContent || ""}）`;
+    $("overlay").style.display = "flex";
+  }
+
+  function openModalAllDay(dateObj){
+    const ymd = toYmd(dateObj);
+    modalState.dateYmd = ymd;
+
+    const baseOptions = buildTimeOptions();       // 00:00～23:45
+    const endOptions = [...baseOptions, "24:00"]; // 終了は24:00も可
+
+    setSelectOptions($("startSel"), baseOptions, "00:00");
+    setSelectOptions($("endSel"), endOptions, "24:00");
+
+    $("note").value = "";
+    $("modalDate").textContent = `${ymd}（終日 / 車：${$("car").selectedOptions[0]?.textContent || ""}）`;
     $("overlay").style.display = "flex";
   }
 
@@ -225,7 +261,7 @@
   async function createReservation(carId, startISO, endISO, note){
     const overlap = await hasOverlap(carId, startISO, endISO);
     if(overlap){
-      alert("その時間帯は既に予約があります。別の車両か時間を変更してください。");
+      alert("その時間帯は既に予約があります。別の時間にしてください。");
       return false;
     }
     const { error } = await sb.from("reservations").insert({
@@ -301,12 +337,8 @@
       timeZone: "Asia/Tokyo",
       locale: "ja",
 
-      // Day/Week を日本語に
-      buttonText: {
-        today: "今日",
-        timeGridDay: "日",
-        timeGridWeek: "週"
-      },
+      // ✅ Day/Week を日本語に
+      buttonText: { today: "今日", timeGridDay: "日", timeGridWeek: "週" },
 
       headerToolbar: {
         left: "prev,next today",
@@ -314,26 +346,30 @@
         right: "timeGridDay,timeGridWeek"
       },
 
-      // 15分単位
+      // ✅ 「1/6(月)」などを2行表示して重なり回避
+      dayHeaderContent: (arg) => {
+        const d = arg.date;
+        const m = d.getMonth() + 1;
+        const day = d.getDate();
+        const wd = ["日","月","火","水","木","金","土"][d.getDay()];
+        return { html: `${m}/${day}<br>(${wd})` };
+      },
+
+      // ✅ 終日枠を表示＆ラベルを「終日」に
+      allDaySlot: true,
+      allDayText: "終日",
+
+      // ✅ 15分単位
       slotDuration: "00:15:00",
       snapDuration: "00:15:00",
 
-      // 00:00〜24:00 表示
+      // ✅ 00:00〜24:00 表示
       slotMinTime: "00:00:00",
       slotMaxTime: "24:00:00",
 
-      // 24時間表記（軸ラベル）
-      slotLabelFormat: {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false
-      },
-      // 24時間表記（イベント表示）
-      eventTimeFormat: {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false
-      },
+      // ✅ 24時間表記
+      slotLabelFormat: { hour: "2-digit", minute: "2-digit", hour12: false },
+      eventTimeFormat: { hour: "2-digit", minute: "2-digit", hour12: false },
 
       // ドラッグ選択は使わない
       selectable: false,
@@ -344,10 +380,13 @@
         catch(e){ console.error(e); alert("予約データの取得に失敗しました"); }
       },
 
-      // ✅ タップした時刻を起点に「開始→終了」を選ぶモーダルを出す
+      // ✅ タップした時にモーダル（終日/時間枠）
       dateClick: (info) => {
-        // timeGrid系で時間があるクリックのみ想定
-        openModal(info.date);
+        if (info.allDay) {
+          openModalAllDay(info.date);
+        } else {
+          openModal(roundTo15(info.date));
+        }
       },
 
       // 自分の予約だけキャンセル
