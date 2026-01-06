@@ -78,6 +78,7 @@
 
   async function loadCars(){
     const { data, error } = await sb.from("cars").select("*").order("id");
+    console.log("cars data:", data, "cars error:", error);
     if(error) throw error;
     $("car").innerHTML = data.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
   }
