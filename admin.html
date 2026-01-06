@@ -92,10 +92,11 @@
     const me = { userId: profile.userId, displayName: profile.displayName };
 
     if(!ADMIN_USER_IDS.includes(me.userId)){
-      $("status").innerHTML = `アクセス拒否（管理者のみ）`;
-      $("tableWrap").innerHTML = "";
-      return;
-    }
+  $("status").innerHTML =
+    `アクセス拒否（管理者のみ）<br>あなたのuserId：<br><b>${me.userId}</b>`;
+  $("tableWrap").innerHTML = "";
+  return;
+}
 
     $("status").innerHTML = `管理者：${me.displayName}`;
     await loadCars();
