@@ -84,7 +84,6 @@
     <div style="display:flex; gap:8px; align-items:center;">
     <span class="badge">車：</span>
     <select id="car"></select>
-<button id="reloadCarsBtn">車一覧更新</button>
 <button id="reloadBtn">予約再読み込み</button>
 
   </div>
@@ -462,14 +461,6 @@ function subscribeCarsRealtime(){
         if(ok) await loadEvents();
       }
     });
-$("reloadCarsBtn").addEventListener("click", async ()=>{
-  const current = $("car").value;
-  await loadCars();
-  if(current) $("car").value = current;
-  // 車が変わった可能性もあるので予約も更新
-  await loadEvents();
-});
-
     calendar.render();
   }
 
