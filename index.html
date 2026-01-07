@@ -391,8 +391,14 @@
   }
 
   // ★キャンセル確認：車名＋時間を表示
-  async function cancelReservation(reservationId, carName, startText, endText){
-    const msg = `車：${carName}\n時間：${startText}〜${endText}\n\nこの予約を取り消します。よろしいですか？`;
+ async function cancelReservation(reservationId, carName, dateText, startText, endText){
+
+    const msg =
+  `車：${carName}\n` +
+  `日付：${dateText}\n` +
+  `時間：${startText}〜${endText}\n\n` +
+  `この予約を取り消します。よろしいですか？`;
+
     const yes = await showConfirm("予約をキャンセルしますか？", msg, "キャンセルする", "やめる");
     if(!yes) return false;
 
@@ -509,11 +515,23 @@
         const end = info.event.end ? fmt(info.event.end) : "";
 
         if(isMine){
-          const carName = getSelectedCarName();
-          const ok = await cancelReservation(info.event.id, carName, start, end);
-          if(ok) await loadEvents();
-          return;
-        }
+  const carName = getSelectedCarName();
+
+  const d = info.event.start;
+  const dateText =
+    `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+
+  const ok = await cancelReservation(
+    info.event.id,
+    carName,
+    dateText,
+    start,
+    end
+  );
+  if(ok) await loadEvents();
+  return;
+}
+
 
         const who = info.event.extendedProps.user_name || "不明";
         await showDialog("予約済み", `利用者：${who}\n時間：${start}〜${end}`);
