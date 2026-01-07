@@ -81,7 +81,7 @@
     }
     .myRow{
       display:flex;
-      align-items:center;
+      align-items:flex-start;
       justify-content:space-between;
       gap:10px;
       flex-wrap:wrap;
@@ -117,15 +117,9 @@
 
   <div id="calendar"></div>
 
-  <!-- ✅ 自分の予約一覧（全車・表示中の期間） -->
+  <!-- ✅ 自分の予約一覧（全車／今日以降すべて） -->
   <div id="myList" style="margin-top:12px;">
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-      <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧（全車／表示中の期間）</h3>
-      <select id="myListFilter" style="padding:8px; font-size:14px;">
-        <option value="all">全車</option>
-        <option value="selected">選択中の車だけ</option>
-      </select>
-    </div>
+    <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧（全車／今日以降すべて）</h3>
     <div id="myListBody" class="small">読み込み中…</div>
   </div>
 
@@ -356,11 +350,6 @@
     $("car").innerHTML = data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
   }
 
-  function getSelectedCarName(){
-    const sel = $("car");
-    return sel?.options?.[sel.selectedIndex]?.textContent ?? "";
-  }
-
   function subscribeCarsRealtime(){
     if(carsChannel){
       try { sb.removeChannel(carsChannel); } catch(_) {}
@@ -469,13 +458,21 @@
     return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
   }
 
-  async function loadMyReservationsForRange(startISO, endISO){
+  // ✅ 今日 00:00（ローカル）
+  function todayStartLocal(){
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  }
+
+  // ★自分の予約一覧：今日以降すべて（全車）
+  async function loadMyReservationsFromToday(){
+    const start = todayStartLocal().toISOString();
+
     const { data, error } = await sb
       .from("reservations")
       .select("id, car_id, user_id, start_time, end_time, note")
       .eq("user_id", me.userId)
-      .lt("start_time", endISO)
-      .gt("end_time", startISO)
+      .gte("end_time", start)   // まだ終わってない予約を残す（開始済みも含む）
       .order("start_time", { ascending: true });
 
     if(error) throw error;
@@ -486,11 +483,7 @@
     const el = $("myListBody");
     if(!el) return;
 
-    const filter = $("myListFilter") ? $("myListFilter").value : "all";
-    const selectedCarId = Number($("car").value);
-
     const list = (myData || [])
-      .filter(r => filter === "selected" ? Number(r.car_id) === selectedCarId : true)
       .map(r => ({
         id: r.id,
         carId: Number(r.car_id),
@@ -502,7 +495,7 @@
       .sort((a,b)=>a.start - b.start);
 
     if(list.length === 0){
-      el.textContent = "この期間の予約はありません。";
+      el.textContent = "今日以降の予約はありません。";
       return;
     }
 
@@ -522,7 +515,6 @@
                   <span class="small">車：${escapeHtml(item.carName)}</span>
                 </div>
                 <div class="myBtns">
-                  <button data-show-car="${item.carId}">この車を見る</button>
                   <button
                     data-cancel-id="${item.id}"
                     data-cancel-carname="${escapeHtml(item.carName)}"
@@ -538,16 +530,6 @@
         }).join("")}
       </div>
     `;
-
-    // この車を見る（カレンダー側の車を切り替えて再読み込み）
-    el.querySelectorAll("button[data-show-car]").forEach(btn=>{
-      btn.addEventListener("click", async ()=>{
-        const carId = btn.getAttribute("data-show-car");
-        $("car").value = String(carId);
-        await loadEvents();
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      });
-    });
 
     // キャンセル（一覧から）
     el.querySelectorAll("button[data-cancel-id]").forEach(btn=>{
@@ -607,8 +589,8 @@
       });
     });
 
-    // ★自分の予約一覧は「全車」から取得して表示
-    const myData = await loadMyReservationsForRange(startISO, endISO);
+    // ★自分の予約一覧（今日以降すべて）を更新
+    const myData = await loadMyReservationsFromToday();
     renderMyReservations(myData);
   }
 
@@ -667,7 +649,7 @@
         const end = info.event.end ? fmt(info.event.end) : "";
 
         if(isMine){
-          const carName = getSelectedCarName();
+          const carName = carsMap?.[Number($("car").value)] ?? "";
           const d = info.event.start;
           const dateText = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
           const ok = await cancelReservation(info.event.id, carName, dateText, start, end);
@@ -687,8 +669,6 @@
   $("reloadBtn").addEventListener("click", loadEvents);
   $("car").addEventListener("change", loadEvents);
   $("cancelModalBtn").addEventListener("click", closeReservationModal);
-
-  $("myListFilter").addEventListener("change", loadEvents);
 
   $("saveModalBtn").addEventListener("click", async ()=>{
     try{
