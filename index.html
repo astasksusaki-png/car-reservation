@@ -550,8 +550,11 @@
         `;
       }).join("");
 
-      return `
-        <div class="dayHeader">${ymd}</div>
+      const d = new Date(ymd + "T00:00:00");
+const wd = ["日","月","火","水","木","金","土"][d.getDay()];
+return `
+  <div class="dayHeader">${ymd}（${wd}）</div>
+
         <div style="display:flex; flex-direction:column; gap:8px;">
           ${cards}
         </div>
