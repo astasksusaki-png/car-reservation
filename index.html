@@ -129,14 +129,14 @@
 
   <!-- ✅ 自分の予約一覧（全車／今日以降すべて／日付ごとにまとめる） -->
   <div id="myList" style="margin-top:12px;">
-    <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧</h3>
+    <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧（全車／今日以降すべて）</h3>
     <div id="myListBody" class="small">読み込み中…</div>
   </div>
 
   <!-- 予約モーダル -->
   <div id="overlay" class="overlay">
     <div class="modal">
-      <h3>予約作成</h3>
+      <h3 id="modalTitle">予約作成</h3>
       <div id="modalDate" class="small"></div>
 
       <div class="row">
@@ -203,9 +203,20 @@
 
   let me = { userId: null, displayName: null };
   let userProfile = { fullName: null };
+
+  // モーダル用
   let modalYmd = null;
 
+  // ✅ 編集モード用（nullなら新規）
+  let editing = {
+    id: null,
+    carId: null
+  };
+
   let carsMap = {}; // { [carId]: carName }
+
+  // 一覧用キャッシュ（編集ボタンで note を埋める用）
+  let myListCache = []; // [{id,carId,start,end,note,carName}...]
 
   const pad = (n)=>String(n).padStart(2,"0");
   const TIMES = [...Array(96)].map((_,i)=>`${pad(Math.floor(i/4))}:${pad((i%4)*15)}`);
@@ -299,11 +310,22 @@
     });
   }
 
-  function openReservationModalByPicked(ymd, startHHMM){
-    modalYmd = ymd;
-
+  // ✅ モーダルの共通初期化（新規/編集どちらでも使う）
+  function prepareModalOptions(){
     $("startSel").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
     $("endSel").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
+  }
+
+  // ✅ 新規：選んだ時刻で開く
+  function openReservationModalNewByPicked(ymd, startHHMM){
+    editing.id = null;
+    editing.carId = null;
+
+    $("modalTitle").textContent = "予約作成";
+    $("saveModalBtn").textContent = "予約する";
+
+    modalYmd = ymd;
+    prepareModalOptions();
 
     $("startSel").value = startHHMM;
 
@@ -318,17 +340,49 @@
     $("overlay").style.display = "flex";
   }
 
-  function openReservationModalAllDay(dateObj){
-    modalYmd = toYmd(dateObj);
+  // ✅ 新規：終日
+  function openReservationModalNewAllDay(dateObj){
+    editing.id = null;
+    editing.carId = null;
 
-    $("startSel").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
-    $("endSel").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
+    $("modalTitle").textContent = "予約作成";
+    $("saveModalBtn").textContent = "予約する";
+
+    modalYmd = toYmd(dateObj);
+    prepareModalOptions();
 
     $("startSel").value = "00:00";
     $("endSel").value = "24:00";
 
     $("note").value = "";
     $("modalDate").textContent = `${modalYmd}（終日）`;
+    $("overlay").style.display = "flex";
+  }
+
+  // ✅ 編集：一覧から開く
+  function openReservationModalEdit(resId){
+    const item = myListCache.find(x => String(x.id) === String(resId));
+    if(!item){
+      showDialog("エラー", "対象の予約が見つかりませんでした。再読み込みしてください。");
+      return;
+    }
+
+    editing.id = item.id;
+    editing.carId = item.carId;
+
+    $("modalTitle").textContent = "予約変更";
+    $("saveModalBtn").textContent = "変更する";
+
+    modalYmd = item.ymd;
+    prepareModalOptions();
+
+    $("startSel").value = item.startHHMM;
+    $("endSel").value = item.endHHMM;
+    $("note").value = item.note || "";
+
+    const carName = item.carName || "";
+    $("modalDate").textContent = `${modalYmd}（${carName}）`;
+
     $("overlay").style.display = "flex";
   }
 
@@ -400,21 +454,26 @@
     showNameModal();
   }
 
-  async function hasOverlap(carId, startISO, endISO){
-    const { data, error } = await sb
+  // ✅ 重複チェック（編集時は自分の予約IDを除外）
+  async function hasOverlap(carId, startISO, endISO, excludeReservationId=null){
+    let q = sb
       .from("reservations")
       .select("id")
       .eq("car_id", carId)
       .lt("start_time", endISO)
-      .gt("end_time", startISO)
-      .limit(1);
+      .gt("end_time", startISO);
 
+    if(excludeReservationId){
+      q = q.neq("id", excludeReservationId);
+    }
+
+    const { data, error } = await q.limit(1);
     if(error) throw error;
-    return data.length > 0;
+    return (data || []).length > 0;
   }
 
   async function createReservation(carId, startISO, endISO, note){
-    const overlap = await hasOverlap(carId, startISO, endISO);
+    const overlap = await hasOverlap(carId, startISO, endISO, null);
     if(overlap){
       await showDialog("予約できません", "その時間帯はすでに予約があります。別の車両か時間を変更してください。");
       return false;
@@ -428,6 +487,28 @@
       end_time: endISO,
       note: (note || "").trim()
     });
+
+    if(error) throw error;
+    return true;
+  }
+
+  // ✅ 編集（UPDATE）
+  async function updateReservation(reservationId, carId, startISO, endISO, note){
+    const overlap = await hasOverlap(carId, startISO, endISO, reservationId);
+    if(overlap){
+      await showDialog("変更できません", "その時間帯はすでに予約があります。別の時間に変更してください。");
+      return false;
+    }
+
+    const { error } = await sb
+      .from("reservations")
+      .update({
+        start_time: startISO,
+        end_time: endISO,
+        note: (note || "").trim()
+      })
+      .eq("id", reservationId)
+      .eq("user_id", me.userId);
 
     if(error) throw error;
     return true;
@@ -489,21 +570,34 @@
     return data || [];
   }
 
-  // ✅ 日付ごとにグループ化して描画
+  // ✅ 日付ごとにグループ化して描画（＋時間変更ボタン）
   function renderMyReservationsGrouped(myData){
     const el = $("myListBody");
     if(!el) return;
 
     const list = (myData || [])
-      .map(r => ({
-        id: r.id,
-        carId: Number(r.car_id),
-        carName: carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`,
-        start: new Date(r.start_time),
-        end: new Date(r.end_time),
-        note: (r.note || "").trim()
-      }))
+      .map(r => {
+        const start = new Date(r.start_time);
+        const end = new Date(r.end_time);
+        const ymd = fmtDateYmd(start);
+        const carId = Number(r.car_id);
+        const carName = carsMap?.[carId] ?? `車ID:${r.car_id}`;
+        return {
+          id: r.id,
+          carId,
+          carName,
+          ymd,
+          start,
+          end,
+          startHHMM: fmtTimeHM(start),
+          endHHMM: fmtTimeHM(end),
+          note: (r.note || "").trim()
+        };
+      })
       .sort((a,b)=>a.start - b.start);
+
+    // ✅ 一覧キャッシュ（編集時に使う）
+    myListCache = list;
 
     if(list.length === 0){
       el.textContent = "今日以降の予約はありません。";
@@ -513,9 +607,8 @@
     // グループ：{ ymd: [items...] }
     const groups = {};
     list.forEach(item=>{
-      const ymd = fmtDateYmd(item.start);
-      if(!groups[ymd]) groups[ymd] = [];
-      groups[ymd].push(item);
+      if(!groups[item.ymd]) groups[item.ymd] = [];
+      groups[item.ymd].push(item);
     });
 
     const ymds = Object.keys(groups).sort();
@@ -523,25 +616,28 @@
     el.innerHTML = ymds.map(ymd=>{
       const items = groups[ymd];
 
+      // ✅ 見出しに曜日を付ける
+      const d = new Date(ymd + "T00:00:00");
+      const wd = ["日","月","火","水","木","金","土"][d.getDay()];
+
       const cards = items.map(item=>{
-        const s = fmtTimeHM(item.start);
-        const e = fmtTimeHM(item.end);
         const note = item.note ? `（${escapeHtml(item.note)}）` : "";
 
         return `
           <div class="myCard">
             <div class="myRow">
               <div class="myCardTitle">
-                ${s}〜${e} ${note}<br>
+                ${item.startHHMM}〜${item.endHHMM} ${note}<br>
                 <span class="small">車：${escapeHtml(item.carName)}</span>
               </div>
               <div class="myBtns">
+                <button data-edit-id="${item.id}">時間変更</button>
                 <button
                   data-cancel-id="${item.id}"
                   data-cancel-carname="${escapeHtml(item.carName)}"
                   data-cancel-date="${ymd}"
-                  data-cancel-start="${s}"
-                  data-cancel-end="${e}">
+                  data-cancel-start="${item.startHHMM}"
+                  data-cancel-end="${item.endHHMM}">
                   キャンセル
                 </button>
               </div>
@@ -550,18 +646,23 @@
         `;
       }).join("");
 
-      const d = new Date(ymd + "T00:00:00");
-const wd = ["日","月","火","水","木","金","土"][d.getDay()];
-return `
-  <div class="dayHeader">${ymd}（${wd}）</div>
-
+      return `
+        <div class="dayHeader">${ymd}（${wd}）</div>
         <div style="display:flex; flex-direction:column; gap:8px;">
           ${cards}
         </div>
       `;
     }).join("");
 
-    // キャンセル（一覧から）
+    // ✅ 時間変更
+    el.querySelectorAll("button[data-edit-id]").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        const id = btn.getAttribute("data-edit-id");
+        openReservationModalEdit(id);
+      });
+    });
+
+    // ✅ キャンセル
     el.querySelectorAll("button[data-cancel-id]").forEach(btn=>{
       btn.addEventListener("click", async ()=>{
         const id = btn.getAttribute("data-cancel-id");
@@ -659,16 +760,16 @@ return `
 
       dateClick:(info)=>{
         if(info.allDay){
-          openReservationModalAllDay(info.date);
+          openReservationModalNewAllDay(info.date);
           return;
         }
         const picked = floorTo15FromDateStr(info.dateStr);
         if(!picked){
           const d = new Date(info.date);
-          openReservationModalByPicked(toYmd(d), `${pad(d.getHours())}:${pad(d.getMinutes())}`);
+          openReservationModalNewByPicked(toYmd(d), `${pad(d.getHours())}:${pad(d.getMinutes())}`);
           return;
         }
-        openReservationModalByPicked(picked.ymd, picked.hhmm);
+        openReservationModalNewByPicked(picked.ymd, picked.hhmm);
       },
 
       eventClick: async (info)=>{
@@ -700,6 +801,7 @@ return `
   $("car").addEventListener("change", loadEvents);
   $("cancelModalBtn").addEventListener("click", closeReservationModal);
 
+  // ✅ 保存（新規/編集の分岐）
   $("saveModalBtn").addEventListener("click", async ()=>{
     try{
       if(!userProfile.fullName){
@@ -708,7 +810,6 @@ return `
         return;
       }
 
-      const carId = Number($("car").value);
       const startStr = $("startSel").value;
       const endStr = $("endSel").value;
 
@@ -720,6 +821,20 @@ return `
         return;
       }
 
+      // ✅ 編集なら「元の車」でUPDATE、新規なら「選択中の車」でINSERT
+      if(editing.id){
+        const carId = Number(editing.carId);
+        const ok = await updateReservation(editing.id, carId, startISO, endISO, $("note").value);
+        if(ok){
+          closeReservationModal();
+          editing.id = null;
+          editing.carId = null;
+          await loadEvents();
+        }
+        return;
+      }
+
+      const carId = Number($("car").value);
       const ok = await createReservation(carId, startISO, endISO, $("note").value);
       if(ok){
         closeReservationModal();
@@ -727,7 +842,7 @@ return `
       }
     }catch(e){
       console.error(e);
-      await showDialog("予約に失敗", "予約に失敗しました（設定値やDBを確認）");
+      await showDialog("処理に失敗", "処理に失敗しました（設定値やDBを確認）");
     }
   });
 
