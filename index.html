@@ -393,11 +393,12 @@
   // ★キャンセル確認：車名＋時間を表示
  async function cancelReservation(reservationId, carName, dateText, startText, endText){
 
-    const msg =
+const msg =
   `車：${carName}\n` +
   `日付：${dateText}\n` +
-  `時間：${startText}〜${endText}\n\n` +
-  `この予約を取り消します。よろしいですか？`;
+  `時間：${startText}〜${endText}\n` +
+  `\nこの予約を取り消します。よろしいですか？`;
+
 
     const yes = await showConfirm("予約をキャンセルしますか？", msg, "キャンセルする", "やめる");
     if(!yes) return false;
