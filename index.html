@@ -84,7 +84,9 @@
     <div style="display:flex; gap:8px; align-items:center;">
     <span class="badge">車：</span>
     <select id="car"></select>
-    <button id="reloadBtn">再読み込み</button>
+<button id="reloadCarsBtn">車一覧更新</button>
+<button id="reloadBtn">予約再読み込み</button>
+
   </div>
 
   <div class="hint">
@@ -258,6 +260,29 @@
     if(error) throw error;
     $("car").innerHTML = data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
   }
+let carsChannel = null;
+
+function subscribeCarsRealtime(){
+  // 二重購読防止
+  if(carsChannel){
+    try { sb.removeChannel(carsChannel); } catch(_) {}
+    carsChannel = null;
+  }
+
+  carsChannel = sb.channel("cars-changes")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "cars" },
+      async () => {
+        // 車名変更が来たらプルダウンを更新
+        const current = $("car").value;
+        await loadCars();
+        // できれば選択中の車を維持
+        if(current) $("car").value = current;
+      }
+    )
+    .subscribe();
+}
 
   async function loadOrAskUserName(){
     // usersテーブルから取得（なければ初回入力）
@@ -437,6 +462,13 @@
         if(ok) await loadEvents();
       }
     });
+$("reloadCarsBtn").addEventListener("click", async ()=>{
+  const current = $("car").value;
+  await loadCars();
+  if(current) $("car").value = current;
+  // 車が変わった可能性もあるので予約も更新
+  await loadEvents();
+});
 
     calendar.render();
   }
@@ -513,7 +545,7 @@
       if(!ok) return;
 
       await loadCars();
-
+subscribeCarsRealtime();
       // ✅ 初回だけ苗字・名前を聞く（ここが②-3にあたる部分）
       await loadOrAskUserName();
 
