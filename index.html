@@ -9,7 +9,7 @@
     body{font-family:system-ui, -apple-system, "Segoe UI", sans-serif; margin:12px; line-height:1.5;}
     .topbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;}
     .badge{font-size:13px; color:#444;}
-    select, button{padding:10px; font-size:16px;}
+    select, button, input{padding:10px; font-size:16px;}
     #status{font-size:13px; color:#666;}
     .hint{font-size:12px; color:#666; margin:6px 0 10px;}
     .fc .fc-toolbar-title{font-size:18px;}
@@ -22,24 +22,25 @@
       padding: 4px 2px;
     }
 
-    /* ===== モーダル ===== */
+    /* ===== モーダル共通 ===== */
     .overlay{
       position:fixed; inset:0; background:rgba(0,0,0,.45);
       display:none; align-items:center; justify-content:center; padding:16px; z-index:9999;
     }
     .modal{
       width:100%;
-      max-width:420px;   /* ← 横幅を抑える */
+      max-width:420px;   /* 横幅を抑える */
       background:#fff;
       border-radius:14px;
       padding:14px;
       box-shadow:0 10px 30px rgba(0,0,0,.2);
+      box-sizing:border-box;
     }
     .modal h3{margin:0 0 8px 0; font-size:18px;}
     .modal .row{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
     .modal label{display:block; font-size:13px; color:#444; margin-top:10px;}
     .modal textarea{
-      width:100%;        /* ← はみ出し防止 */
+      width:100%;
       max-width:100%;
       box-sizing:border-box;
       padding:10px;
@@ -47,8 +48,17 @@
       margin-top:6px;
       resize:vertical;
     }
+    .modal input{
+      width:100%;
+      max-width:100%;
+      box-sizing:border-box;
+      padding:10px;
+      font-size:16px;
+      margin-top:6px;
+    }
     .modal .actions{display:flex; gap:10px; justify-content:flex-end; margin-top:12px;}
     .small{font-size:12px; color:#666;}
+    .pill{display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:12px; color:#444;}
   </style>
 
   <!-- LIFF -->
@@ -71,12 +81,13 @@
 
   <div class="hint">
     ・時間枠をタップして開始→終了を15分刻みで選択<br>
-    ・終日をタップすると 00:00〜24:00 を選択できます
+    ・終日をタップすると 00:00〜24:00 を選択できます<br>
+    ・予約表示名：<span id="displayName" class="pill">未設定</span>
   </div>
 
   <div id="calendar"></div>
 
-  <!-- モーダル -->
+  <!-- 予約モーダル -->
   <div id="overlay" class="overlay">
     <div class="modal">
       <h3>予約作成</h3>
@@ -84,17 +95,17 @@
 
       <div class="row">
         <div>
-          <label>開始</label>
+          <label>開始（15分刻み）</label>
           <select id="startSel"></select>
         </div>
         <div>
-          <label>終了</label>
+          <label>終了（15分刻み）</label>
           <select id="endSel"></select>
         </div>
       </div>
 
       <label>用途メモ（任意）</label>
-      <textarea id="note" rows="2"></textarea>
+      <textarea id="note" rows="2" placeholder="例：顧客訪問、備品搬入など"></textarea>
 
       <div class="actions">
         <button id="cancelModalBtn">キャンセル</button>
@@ -103,81 +114,409 @@
     </div>
   </div>
 
+  <!-- 初回ログイン：名前入力モーダル -->
+  <div id="nameOverlay" class="overlay">
+    <div class="modal">
+      <h3>お名前の入力</h3>
+      <div class="small">初回のみ。苗字・名前を入力してください（予約・管理画面に反映されます）</div>
+
+      <label>苗字</label>
+      <input id="lastName" type="text" placeholder="例：山田" />
+
+      <label>名前</label>
+      <input id="firstName" type="text" placeholder="例：太郎" />
+
+      <div class="actions">
+        <button id="saveNameBtn">保存</button>
+      </div>
+    </div>
+  </div>
+
 <script>
+  // ✅ あなたの値
   const LIFF_ID = "2008829976-rJa7ANlR";
   const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
 
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const $ = (id)=>document.getElementById(id);
-  let me={}, calendar=null, modalYmd=null;
 
-  const pad=n=>String(n).padStart(2,"0");
-  const times=[...Array(96)].map((_,i)=>`${pad(Math.floor(i/4))}:${pad((i%4)*15)}`);
+  let calendar = null;
 
-  function toYmd(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;}
-  function iso(ymd,t){let[d,h]=[ymd,t==="24:00"?24:parseInt(t)],m=t==="24:00"?0:parseInt(t.split(":")[1]);let dt=new Date(...ymd.split("-").map(Number));dt.setHours(h,m,0,0);if(t==="24:00")dt.setDate(dt.getDate()+1);return dt.toISOString();}
-  function round15(d){d=new Date(d);d.setSeconds(0,0);d.setMinutes(Math.round(d.getMinutes()/15)*15);return d;}
+  // LIFFプロフィール（LINE userId取得用）
+  let me = { userId: null, displayName: null };
 
-  async function init(){
-    await liff.init({liffId:LIFF_ID});
-    if(!liff.isLoggedIn()) return liff.login();
-    me=await liff.getProfile();
-    $("status").textContent=`ログイン中：${me.displayName}`;
+  // DBに保存した「苗字 名前」をここに持つ（予約の user_name に使う）
+  let userProfile = { fullName: null };
 
-    const {data}=await sb.from("cars").select("*").order("id");
-    $("car").innerHTML=data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+  // 予約モーダル用
+  let modalYmd = null;
 
-    calendar=new FullCalendar.Calendar($("calendar"),{
-      locale:"ja",
-      timeZone:"Asia/Tokyo",
-      firstDay:1,                 /* ← 月曜始まり */
-      initialView:"timeGridWeek",
-      buttonText:{today:"今日",timeGridDay:"日",timeGridWeek:"週"},
-      headerToolbar:{left:"prev,next today",center:"title",right:"timeGridDay,timeGridWeek"},
-      dayHeaderContent:a=>({html:`${a.date.getMonth()+1}/${a.date.getDate()}<br>(${["日","月","火","水","木","金","土"][a.date.getDay()]})`}),
-      allDaySlot:true,
-      allDayText:"終日",
-      slotDuration:"00:15:00",
-      slotMinTime:"00:00:00",
-      slotMaxTime:"24:00:00",
-      slotLabelFormat:{hour:"2-digit",minute:"2-digit",hour12:false},
-      eventTimeFormat:{hour:"2-digit",minute:"2-digit",hour12:false},
-      datesSet:loadEvents,
-      dateClick:i=>openModal(i.allDay?i.date:round15(i.date)),
-      eventClick:e=>e.event.extendedProps.uid===me.userId&&del(e.event.id)
+  const pad = (n)=>String(n).padStart(2,"0");
+
+  // 00:00 ～ 23:45（15分刻み） => 96個
+  const TIMES = [...Array(96)].map((_,i)=>`${pad(Math.floor(i/4))}:${pad((i%4)*15)}`);
+
+  function setStatus(text){ $("status").textContent = text; }
+
+  function toYmd(d){
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+
+  function round15(d){
+    // クリック時刻のズレ防止（15分単位に丸め）
+    const dt = new Date(d);
+    dt.setSeconds(0,0);
+    const m = dt.getMinutes();
+    const rounded = Math.round(m / 15) * 15;
+    if (rounded === 60) {
+      dt.setHours(dt.getHours() + 1);
+      dt.setMinutes(0);
+    } else {
+      dt.setMinutes(rounded);
+    }
+    return dt;
+  }
+
+  function toISOFromYmdTime(ymd, hhmm){
+    // "24:00" は翌日00:00に変換
+    const [y, m, d] = ymd.split("-").map(Number);
+    if (hhmm === "24:00") {
+      const dt = new Date(y, m-1, d+1, 0, 0, 0, 0);
+      return dt.toISOString();
+    }
+    const [hh, mm] = hhmm.split(":").map(Number);
+    const dt = new Date(y, m-1, d, hh, mm, 0, 0);
+    return dt.toISOString();
+  }
+
+  function openReservationModal(dateObj, isAllDay){
+    modalYmd = toYmd(dateObj);
+
+    // 選択肢セット
+    $("startSel").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
+    $("endSel").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
+
+    // 初期値
+    if (isAllDay) {
+      $("startSel").value = "00:00";
+      $("endSel").value = "24:00";
+      $("modalDate").textContent = `${modalYmd}（終日）`;
+    } else {
+      const d = round15(dateObj);
+      const startDefault = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      $("startSel").value = startDefault;
+
+      // 終了は開始+30分（最大24:00）
+      const startMin = d.getHours()*60 + d.getMinutes();
+      const endMin = Math.min(startMin + 30, 24*60);
+      const endDefault = (endMin >= 24*60) ? "24:00" : `${pad(Math.floor(endMin/60))}:${pad(endMin%60)}`;
+      $("endSel").value = endDefault;
+
+      $("modalDate").textContent = `${modalYmd}`;
+    }
+
+    $("note").value = "";
+    $("overlay").style.display = "flex";
+  }
+
+  function closeReservationModal(){
+    $("overlay").style.display = "none";
+  }
+
+  function showNameModal(){
+    $("nameOverlay").style.display = "flex";
+  }
+  function hideNameModal(){
+    $("nameOverlay").style.display = "none";
+  }
+
+  async function initLiff(){
+    await liff.init({ liffId: LIFF_ID });
+    if(!liff.isLoggedIn()){
+      setStatus("未ログイン：ログインします…");
+      liff.login();
+      return false;
+    }
+    const profile = await liff.getProfile();
+    me.userId = profile.userId;
+    me.displayName = profile.displayName;
+    setStatus(`ログイン中：${me.displayName}`);
+    return true;
+  }
+
+  async function loadCars(){
+    const { data, error } = await sb.from("cars").select("*").order("id");
+    if(error) throw error;
+    $("car").innerHTML = data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+  }
+
+  async function loadOrAskUserName(){
+    // usersテーブルから取得（なければ初回入力）
+    const { data, error } = await sb
+      .from("users")
+      .select("last_name, first_name")
+      .eq("user_id", me.userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error(error);
+      // usersテーブル未作成などの可能性
+      alert("usersテーブルが見つからない可能性があります。Supabaseで users テーブルを作成してください。");
+      return;
+    }
+
+    if (data && data.last_name && data.first_name) {
+      userProfile.fullName = `${data.last_name} ${data.first_name}`;
+      $("displayName").textContent = userProfile.fullName;
+      return;
+    }
+
+    // なければ入力
+    $("displayName").textContent = "未設定";
+    $("lastName").value = "";
+    $("firstName").value = "";
+    showNameModal();
+  }
+
+  async function hasOverlap(carId, startISO, endISO){
+    const { data, error } = await sb
+      .from("reservations")
+      .select("id")
+      .eq("car_id", carId)
+      .lt("start_time", endISO)
+      .gt("end_time", startISO)
+      .limit(1);
+
+    if(error) throw error;
+    return data.length > 0;
+  }
+
+  async function createReservation(carId, startISO, endISO, note){
+    const overlap = await hasOverlap(carId, startISO, endISO);
+    if(overlap){
+      alert("その時間帯は既に予約があります。別の時間にしてください。");
+      return false;
+    }
+
+    const { error } = await sb.from("reservations").insert({
+      car_id: carId,
+      user_id: me.userId,
+      user_name: userProfile.fullName ?? me.displayName, // ★苗字 名前があればそれを使う
+      start_time: startISO,
+      end_time: endISO,
+      note: (note || "").trim()
     });
-    calendar.render();
-    loadEvents();
+
+    if(error) throw error;
+    return true;
+  }
+
+  async function cancelReservation(reservationId){
+    if(!confirm("この予約をキャンセルしますか？")) return false;
+
+    const { error } = await sb
+      .from("reservations")
+      .delete()
+      .eq("id", reservationId)
+      .eq("user_id", me.userId);
+
+    if(error){
+      alert("キャンセルできませんでした（自分の予約のみキャンセル可）");
+      return false;
+    }
+    return true;
   }
 
   async function loadEvents(){
-    const v=calendar.view, car=+$("car").value;
-    const {data}=await sb.from("reservations").select("*")
-      .eq("car_id",car).lt("start_time",v.activeEnd.toISOString())
-      .gt("end_time",v.activeStart.toISOString());
+    if(!calendar) return;
+
+    const view = calendar.view;
+    const carId = Number($("car").value);
+
+    const startISO = view.activeStart.toISOString();
+    const endISO = view.activeEnd.toISOString();
+
+    const { data, error } = await sb
+      .from("reservations")
+      .select("id, user_id, user_name, start_time, end_time, note")
+      .eq("car_id", carId)
+      .lt("start_time", endISO)
+      .gt("end_time", startISO)
+      .order("start_time", { ascending: true });
+
+    if(error){
+      console.error(error);
+      alert("予約データの取得に失敗しました");
+      return;
+    }
+
     calendar.removeAllEvents();
-    data.forEach(r=>calendar.addEvent({id:r.id,start:r.start_time,end:r.end_time,title:r.user_name,extendedProps:{uid:r.user_id}}));
+
+    data.forEach(r=>{
+      const isMine = (r.user_id === me.userId);
+      const title = isMine
+        ? `（自分）${r.note ? r.note : ""}`.trim()
+        : `${r.user_name}${r.note ? " / " + r.note : ""}`;
+
+      calendar.addEvent({
+        id: r.id,
+        title,
+        start: r.start_time,
+        end: r.end_time,
+        extendedProps: { uid: r.user_id }
+      });
+    });
   }
 
-  function openModal(d){
-    modalYmd=toYmd(d);
-    $("startSel").innerHTML=times.map(t=>`<option>${t}</option>`).join("");
-    $("endSel").innerHTML=[...times,"24:00"].map(t=>`<option>${t}</option>`).join("");
-    $("overlay").style.display="flex";
-    $("modalDate").textContent=modalYmd;
+  function initCalendar(){
+    calendar = new FullCalendar.Calendar($("calendar"),{
+      locale:"ja",
+      timeZone:"Asia/Tokyo",
+      firstDay: 1, // ✅ 月曜始まり
+
+      initialView:"timeGridWeek",
+
+      buttonText:{today:"今日", timeGridDay:"日", timeGridWeek:"週"},
+      headerToolbar:{left:"prev,next today", center:"title", right:"timeGridDay,timeGridWeek"},
+
+      // ✅ 「1/6(月)」を2行表示で見やすく
+      dayHeaderContent:(arg)=>{
+        const d = arg.date;
+        const m = d.getMonth()+1;
+        const day = d.getDate();
+        const wd = ["日","月","火","水","木","金","土"][d.getDay()];
+        return { html: `${m}/${day}<br>(${wd})` };
+      },
+
+      // ✅ 終日スロット
+      allDaySlot:true,
+      allDayText:"終日",
+
+      // ✅ 15分単位
+      slotDuration:"00:15:00",
+      snapDuration:"00:15:00",
+
+      // ✅ 00:00〜24:00 表示
+      slotMinTime:"00:00:00",
+      slotMaxTime:"24:00:00",
+
+      // ✅ 24時間表記
+      slotLabelFormat:{hour:"2-digit", minute:"2-digit", hour12:false},
+      eventTimeFormat:{hour:"2-digit", minute:"2-digit", hour12:false},
+
+      selectable:false, // ドラッグ選択なし
+
+      datesSet: loadEvents,
+
+      // ✅ タップで予約モーダル
+      dateClick:(info)=>{
+        if(info.allDay){
+          openReservationModal(info.date, true);    // 終日：00:00〜24:00
+        }else{
+          openReservationModal(info.date, false);   // 時間：クリック時刻（15分丸め）
+        }
+      },
+
+      // ✅ 自分の予約だけキャンセル
+      eventClick: async (info)=>{
+        const isMine = info.event.extendedProps.uid === me.userId;
+        if(!isMine){
+          alert("他人の予約はキャンセルできません。");
+          return;
+        }
+        const ok = await cancelReservation(info.event.id);
+        if(ok) await loadEvents();
+      }
+    });
+
+    calendar.render();
   }
 
-  $("saveModalBtn").onclick=async()=>{
-    const s=iso(modalYmd,$("startSel").value), e=iso(modalYmd,$("endSel").value);
-    if(new Date(s)>=new Date(e)) return alert("終了は開始より後にしてください");
-    await sb.from("reservations").insert({car_id:+$("car").value,user_id:me.userId,user_name:me.displayName,start_time:s,end_time:e,note:$("note").value});
-    $("overlay").style.display="none";
-    loadEvents();
-  };
-  $("cancelModalBtn").onclick=()=>{$("overlay").style.display="none";};
+  // ====== UIイベント ======
+  $("reloadBtn").addEventListener("click", loadEvents);
+  $("car").addEventListener("change", loadEvents);
 
-  init();
+  $("cancelModalBtn").addEventListener("click", closeReservationModal);
+
+  $("saveModalBtn").addEventListener("click", async ()=>{
+    try{
+      if(!userProfile.fullName){
+        alert("先に「苗字・名前」の登録をしてください。");
+        showNameModal();
+        return;
+      }
+
+      const carId = Number($("car").value);
+      const startStr = $("startSel").value;
+      const endStr = $("endSel").value;
+
+      const startISO = toISOFromYmdTime(modalYmd, startStr);
+      const endISO = toISOFromYmdTime(modalYmd, endStr);
+
+      if(new Date(startISO) >= new Date(endISO)){
+        alert("終了は開始より後にしてください。");
+        return;
+      }
+
+      const ok = await createReservation(carId, startISO, endISO, $("note").value);
+      if(ok){
+        closeReservationModal();
+        await loadEvents();
+      }
+    }catch(e){
+      console.error(e);
+      alert("予約に失敗しました（設定値やDBを確認）");
+    }
+  });
+
+  // ✅ 名前保存ボタン
+  $("saveNameBtn").addEventListener("click", async ()=>{
+    const last = $("lastName").value.trim();
+    const first = $("firstName").value.trim();
+
+    if(!last || !first){
+      alert("苗字と名前を入力してください。");
+      return;
+    }
+
+    // users に保存（同じuser_idが既にあれば更新）
+    const { error } = await sb.from("users").upsert({
+      user_id: me.userId,
+      last_name: last,
+      first_name: first
+    });
+
+    if(error){
+      console.error(error);
+      alert("保存に失敗しました。Supabaseの users テーブルや権限を確認してください。");
+      return;
+    }
+
+    userProfile.fullName = `${last} ${first}`;
+    $("displayName").textContent = userProfile.fullName;
+    hideNameModal();
+  });
+
+  // ====== 起動 ======
+  (async ()=>{
+    try{
+      const ok = await initLiff();
+      if(!ok) return;
+
+      await loadCars();
+
+      // ✅ 初回だけ苗字・名前を聞く（ここが②-3にあたる部分）
+      await loadOrAskUserName();
+
+      initCalendar();
+      await loadEvents();
+    }catch(e){
+      console.error(e);
+      setStatus("初期化エラー：設定（LIFF/Supabase）を確認してください");
+      alert("初期化に失敗しました。");
+    }
+  })();
 </script>
 </body>
 </html>
