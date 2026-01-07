@@ -391,13 +391,15 @@ function subscribeCarsRealtime(){
         ? `（自分）${r.note ? r.note : ""}`.trim()
         : `${r.user_name}${r.note ? " / " + r.note : ""}`;
 
-      calendar.addEvent({
-        id: r.id,
-        title,
-        start: r.start_time,
-        end: r.end_time,
-        extendedProps: { uid: r.user_id }
-      });
+     calendar.addEvent({
+  id: r.id,
+  title,
+  // ★ここがポイント：Z付きISOに正規化して渡す
+  start: new Date(r.start_time).toISOString(),
+  end: new Date(r.end_time).toISOString(),
+  extendedProps: { uid: r.user_id }
+});
+
     });
   }
 
