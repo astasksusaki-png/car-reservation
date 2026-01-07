@@ -117,8 +117,15 @@
   <div id="calendar"></div>
 
   <!-- ✅ 自分の予約一覧（カレンダー下） -->
-  <div id="myList" style="margin-top:12px;">
-    <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧（表示中の期間）</h3>
+<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+  <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧（表示中の期間）</h3>
+
+  <select id="myListFilter" style="padding:8px; font-size:14px;">
+    <option value="all">全車</option>
+    <option value="selected">選択中の車だけ</option>
+  </select>
+</div>
+
     <div id="myListBody" class="small">読み込み中…</div>
   </div>
 
@@ -189,6 +196,7 @@
 
   let calendar = null;
   let carsChannel = null;
+let carsMap = {}; // { [carId]: carName }
 
   let me = { userId: null, displayName: null };
   let userProfile = { fullName: null };
@@ -337,11 +345,16 @@
     return true;
   }
 
-  async function loadCars(){
-    const { data, error } = await sb.from("cars").select("*").order("id");
-    if(error) throw error;
-    $("car").innerHTML = data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
-  }
+ async function loadCars(){
+  const { data, error } = await sb.from("cars").select("*").order("id");
+  if(error) throw error;
+
+  carsMap = {};
+  data.forEach(c => { carsMap[c.id] = c.name; });
+
+  $("car").innerHTML = data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+}
+
 
   function getSelectedCarName(){
     const sel = $("car");
@@ -458,52 +471,111 @@
   }
 
   // ★自分の予約一覧（表示中期間）
-  function renderMyReservations(data){
-    const el = $("myListBody");
-    if(!el) return;
+async function loadMyReservationsForRange(startISO, endISO){
+  const { data, error } = await sb
+    .from("reservations")
+    .select("id, car_id, user_id, start_time, end_time, note")
+    .eq("user_id", me.userId)
+    .lt("start_time", endISO)
+    .gt("end_time", startISO)
+    .order("start_time", { ascending: true });
 
-    const mine = (data || [])
-      .filter(r => r.user_id === me.userId)
-      .map(r => ({
-        id: r.id,
-        start: new Date(r.start_time),
-        end: new Date(r.end_time),
-        note: (r.note || "").trim()
-      }))
-      .sort((a,b)=>a.start - b.start);
+  if(error) throw error;
+  return data || [];
+}
 
-    if(mine.length === 0){
-      el.textContent = "この期間の予約はありません。";
-      return;
-    }
+  function renderMyReservations(myData){
+  const el = $("myListBody");
+  if(!el) return;
 
-    const carName = getSelectedCarName();
+  const filter = $("myListFilter") ? $("myListFilter").value : "all";
+  const selectedCarId = Number($("car").value);
 
-    el.innerHTML = `
-      <div style="display:flex; flex-direction:column; gap:8px;">
-        ${mine.map(item=>{
-          const ymd = fmtDateYmd(item.start);
-          const s = fmtTimeHM(item.start);
-          const e = fmtTimeHM(item.end);
-          const note = item.note ? `（${escapeHtml(item.note)}）` : "";
-         return `
-  <div class="myCard">
-    <div class="myRow">
-      <div class="myCardTitle"><b>${ymd}</b> ${s}〜${e} ${note}</div>
-      <button
-        data-id="${item.id}"
-        data-ymd="${ymd}"
-        data-s="${s}"
-        data-e="${e}">
-        キャンセル
-      </button>
+  const mine = (myData || [])
+    .filter(r => filter === "selected" ? Number(r.car_id) === selectedCarId : true)
+    .map(r => ({
+      id: r.id,
+      carId: Number(r.car_id),
+      carName: carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`,
+      start: new Date(r.start_time),
+      end: new Date(r.end_time),
+      note: (r.note || "").trim()
+    }))
+    .sort((a,b)=>a.start - b.start);
+
+  if(mine.length === 0){
+    el.textContent = "この期間の予約はありません。";
+    return;
+  }
+
+  const fmtDateYmd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const fmtTimeHM  = (d) => `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+
+  el.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:8px;">
+      ${mine.map(item=>{
+        const ymd = fmtDateYmd(item.start);
+        const s = fmtTimeHM(item.start);
+        const e = fmtTimeHM(item.end);
+        const note = item.note ? `（${escapeHtml(item.note)}）` : "";
+
+        return `
+          <div class="myCard">
+            <div class="myRow">
+              <div class="myCardTitle">
+                <b>${ymd}</b> ${s}〜${e} ${note}<br>
+                <span class="small">車：${escapeHtml(item.carName)}</span>
+              </div>
+
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button
+                  data-show-car="${item.carId}"
+                  style="padding:8px 10px; font-size:14px;">
+                  この車を見る
+                </button>
+
+                <button
+                  data-cancel-id="${item.id}"
+                  data-cancel-carname="${escapeHtml(item.carName)}"
+                  data-cancel-date="${ymd}"
+                  data-cancel-start="${s}"
+                  data-cancel-end="${e}"
+                  style="padding:8px 10px; font-size:14px;">
+                  キャンセル
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("")}
     </div>
-  </div>
-`;
+  `;
 
-        }).join("")}
-      </div>
-    `;
+  // 「この車を見る」：カレンダーの車を切り替える
+  el.querySelectorAll("button[data-show-car]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      const carId = btn.getAttribute("data-show-car");
+      $("car").value = String(carId);
+      await loadEvents();
+      // ついでに上へ（任意）
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  });
+
+  // キャンセル
+  el.querySelectorAll("button[data-cancel-id]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      const id = btn.getAttribute("data-cancel-id");
+      const carName = btn.getAttribute("data-cancel-carname") || "";
+      const dateText = btn.getAttribute("data-cancel-date");
+      const startText = btn.getAttribute("data-cancel-start");
+      const endText = btn.getAttribute("data-cancel-end");
+
+      const ok = await cancelReservation(id, carName, dateText, startText, endText);
+      if(ok) await loadEvents();
+    });
+  });
+}
 
     el.querySelectorAll("button[data-id]").forEach(btn=>{
       btn.addEventListener("click", async ()=>{
