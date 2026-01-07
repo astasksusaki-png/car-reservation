@@ -74,20 +74,21 @@
 
     /* 自分の予約一覧 */
     .myCard{
-      border:1px solid #eee; border-radius:12px; padding:10px;
+      border:1px solid #eee;
+      border-radius:12px;
+      padding:10px;
       background:#fff;
     }
-    .myCardTitle{font-size:14px;}
-    .myCardActions{margin-top:8px; display:flex; justify-content:flex-end;}
-    .myCardActions button{padding:8px 10px; font-size:14px;}
-
     .myRow{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap:10px;
-}
-
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .myCardTitle{font-size:14px;}
+    .myBtns{display:flex; gap:8px; align-items:center;}
+    .myBtns button{padding:8px 10px; font-size:14px;}
   </style>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -116,16 +117,15 @@
 
   <div id="calendar"></div>
 
-  <!-- ✅ 自分の予約一覧（カレンダー下） -->
-<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-  <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧（表示中の期間）</h3>
-
-  <select id="myListFilter" style="padding:8px; font-size:14px;">
-    <option value="all">全車</option>
-    <option value="selected">選択中の車だけ</option>
-  </select>
-</div>
-
+  <!-- ✅ 自分の予約一覧（全車・表示中の期間） -->
+  <div id="myList" style="margin-top:12px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+      <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧（全車／表示中の期間）</h3>
+      <select id="myListFilter" style="padding:8px; font-size:14px;">
+        <option value="all">全車</option>
+        <option value="selected">選択中の車だけ</option>
+      </select>
+    </div>
     <div id="myListBody" class="small">読み込み中…</div>
   </div>
 
@@ -178,7 +178,7 @@
   <div id="dlgOverlay" class="overlay">
     <div class="modal">
       <h3 id="dlgTitle">お知らせ</h3>
-  <div id="dlgMsg" style="margin-top:8px; white-space:pre-wrap;"></div>
+      <div id="dlgMsg" style="margin-top:8px; white-space:pre-wrap;"></div>
       <div class="actions" style="margin-top:12px;">
         <button id="dlgOkBtn">OK</button>
       </div>
@@ -196,11 +196,12 @@
 
   let calendar = null;
   let carsChannel = null;
-let carsMap = {}; // { [carId]: carName }
 
   let me = { userId: null, displayName: null };
   let userProfile = { fullName: null };
   let modalYmd = null;
+
+  let carsMap = {}; // { [carId]: carName }
 
   const pad = (n)=>String(n).padStart(2,"0");
   const TIMES = [...Array(96)].map((_,i)=>`${pad(Math.floor(i/4))}:${pad((i%4)*15)}`);
@@ -345,16 +346,15 @@ let carsMap = {}; // { [carId]: carName }
     return true;
   }
 
- async function loadCars(){
-  const { data, error } = await sb.from("cars").select("*").order("id");
-  if(error) throw error;
+  async function loadCars(){
+    const { data, error } = await sb.from("cars").select("*").order("id");
+    if(error) throw error;
 
-  carsMap = {};
-  data.forEach(c => { carsMap[c.id] = c.name; });
+    carsMap = {};
+    data.forEach(c => { carsMap[c.id] = c.name; });
 
-  $("car").innerHTML = data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
-}
-
+    $("car").innerHTML = data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+  }
 
   function getSelectedCarName(){
     const sel = $("car");
@@ -434,16 +434,15 @@ let carsMap = {}; // { [carId]: carName }
     return true;
   }
 
-  // ★キャンセル確認：車名＋日付＋時間
+  // ★キャンセル確認：車名＋日付＋時間（改行崩れ防止）
   async function cancelReservation(reservationId, carName, dateText, startText, endText){
-   const msg = [
-  `車：${carName}`,
-  `日付：${dateText}`,
-  `時間：${startText}〜${endText}`,
-  "", // ←ここだけ空行（質問の前に1行だけ空ける）
-  "この予約を取り消します。よろしいですか？"
-].join("\n");
-
+    const msg = [
+      `車：${carName}`,
+      `日付：${dateText}`,
+      `時間：${startText}〜${endText}`,
+      "",
+      "この予約を取り消します。よろしいですか？"
+    ].join("\n");
 
     const yes = await showConfirm("予約をキャンセルしますか？", msg, "キャンセルする", "やめる");
     if(!yes) return false;
@@ -470,120 +469,96 @@ let carsMap = {}; // { [carId]: carName }
     return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
   }
 
-  // ★自分の予約一覧（表示中期間）
-async function loadMyReservationsForRange(startISO, endISO){
-  const { data, error } = await sb
-    .from("reservations")
-    .select("id, car_id, user_id, start_time, end_time, note")
-    .eq("user_id", me.userId)
-    .lt("start_time", endISO)
-    .gt("end_time", startISO)
-    .order("start_time", { ascending: true });
+  async function loadMyReservationsForRange(startISO, endISO){
+    const { data, error } = await sb
+      .from("reservations")
+      .select("id, car_id, user_id, start_time, end_time, note")
+      .eq("user_id", me.userId)
+      .lt("start_time", endISO)
+      .gt("end_time", startISO)
+      .order("start_time", { ascending: true });
 
-  if(error) throw error;
-  return data || [];
-}
-
-  function renderMyReservations(myData){
-  const el = $("myListBody");
-  if(!el) return;
-
-  const filter = $("myListFilter") ? $("myListFilter").value : "all";
-  const selectedCarId = Number($("car").value);
-
-  const mine = (myData || [])
-    .filter(r => filter === "selected" ? Number(r.car_id) === selectedCarId : true)
-    .map(r => ({
-      id: r.id,
-      carId: Number(r.car_id),
-      carName: carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`,
-      start: new Date(r.start_time),
-      end: new Date(r.end_time),
-      note: (r.note || "").trim()
-    }))
-    .sort((a,b)=>a.start - b.start);
-
-  if(mine.length === 0){
-    el.textContent = "この期間の予約はありません。";
-    return;
+    if(error) throw error;
+    return data || [];
   }
 
-  const fmtDateYmd = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-  const fmtTimeHM  = (d) => `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  function renderMyReservations(myData){
+    const el = $("myListBody");
+    if(!el) return;
 
-  el.innerHTML = `
-    <div style="display:flex; flex-direction:column; gap:8px;">
-      ${mine.map(item=>{
-        const ymd = fmtDateYmd(item.start);
-        const s = fmtTimeHM(item.start);
-        const e = fmtTimeHM(item.end);
-        const note = item.note ? `（${escapeHtml(item.note)}）` : "";
+    const filter = $("myListFilter") ? $("myListFilter").value : "all";
+    const selectedCarId = Number($("car").value);
 
-        return `
-          <div class="myCard">
-            <div class="myRow">
-              <div class="myCardTitle">
-                <b>${ymd}</b> ${s}〜${e} ${note}<br>
-                <span class="small">車：${escapeHtml(item.carName)}</span>
-              </div>
+    const list = (myData || [])
+      .filter(r => filter === "selected" ? Number(r.car_id) === selectedCarId : true)
+      .map(r => ({
+        id: r.id,
+        carId: Number(r.car_id),
+        carName: carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`,
+        start: new Date(r.start_time),
+        end: new Date(r.end_time),
+        note: (r.note || "").trim()
+      }))
+      .sort((a,b)=>a.start - b.start);
 
-              <div style="display:flex; gap:8px; align-items:center;">
-                <button
-                  data-show-car="${item.carId}"
-                  style="padding:8px 10px; font-size:14px;">
-                  この車を見る
-                </button>
+    if(list.length === 0){
+      el.textContent = "この期間の予約はありません。";
+      return;
+    }
 
-                <button
-                  data-cancel-id="${item.id}"
-                  data-cancel-carname="${escapeHtml(item.carName)}"
-                  data-cancel-date="${ymd}"
-                  data-cancel-start="${s}"
-                  data-cancel-end="${e}"
-                  style="padding:8px 10px; font-size:14px;">
-                  キャンセル
-                </button>
+    el.innerHTML = `
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        ${list.map(item=>{
+          const ymd = fmtDateYmd(item.start);
+          const s = fmtTimeHM(item.start);
+          const e = fmtTimeHM(item.end);
+          const note = item.note ? `（${escapeHtml(item.note)}）` : "";
+
+          return `
+            <div class="myCard">
+              <div class="myRow">
+                <div class="myCardTitle">
+                  <b>${ymd}</b> ${s}〜${e} ${note}<br>
+                  <span class="small">車：${escapeHtml(item.carName)}</span>
+                </div>
+                <div class="myBtns">
+                  <button data-show-car="${item.carId}">この車を見る</button>
+                  <button
+                    data-cancel-id="${item.id}"
+                    data-cancel-carname="${escapeHtml(item.carName)}"
+                    data-cancel-date="${ymd}"
+                    data-cancel-start="${s}"
+                    data-cancel-end="${e}">
+                    キャンセル
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  `;
+          `;
+        }).join("")}
+      </div>
+    `;
 
-  // 「この車を見る」：カレンダーの車を切り替える
-  el.querySelectorAll("button[data-show-car]").forEach(btn=>{
-    btn.addEventListener("click", async ()=>{
-      const carId = btn.getAttribute("data-show-car");
-      $("car").value = String(carId);
-      await loadEvents();
-      // ついでに上へ（任意）
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    });
-  });
-
-  // キャンセル
-  el.querySelectorAll("button[data-cancel-id]").forEach(btn=>{
-    btn.addEventListener("click", async ()=>{
-      const id = btn.getAttribute("data-cancel-id");
-      const carName = btn.getAttribute("data-cancel-carname") || "";
-      const dateText = btn.getAttribute("data-cancel-date");
-      const startText = btn.getAttribute("data-cancel-start");
-      const endText = btn.getAttribute("data-cancel-end");
-
-      const ok = await cancelReservation(id, carName, dateText, startText, endText);
-      if(ok) await loadEvents();
-    });
-  });
-}
-
-    el.querySelectorAll("button[data-id]").forEach(btn=>{
+    // この車を見る（カレンダー側の車を切り替えて再読み込み）
+    el.querySelectorAll("button[data-show-car]").forEach(btn=>{
       btn.addEventListener("click", async ()=>{
-        const id = btn.getAttribute("data-id");
-        const ymd = btn.getAttribute("data-ymd");
-        const s = btn.getAttribute("data-s");
-        const e = btn.getAttribute("data-e");
-        const ok = await cancelReservation(id, carName, ymd, s, e);
+        const carId = btn.getAttribute("data-show-car");
+        $("car").value = String(carId);
+        await loadEvents();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    });
+
+    // キャンセル（一覧から）
+    el.querySelectorAll("button[data-cancel-id]").forEach(btn=>{
+      btn.addEventListener("click", async ()=>{
+        const id = btn.getAttribute("data-cancel-id");
+        const carName = btn.getAttribute("data-cancel-carname") || "";
+        const dateText = btn.getAttribute("data-cancel-date");
+        const startText = btn.getAttribute("data-cancel-start");
+        const endText = btn.getAttribute("data-cancel-end");
+
+        const ok = await cancelReservation(id, carName, dateText, startText, endText);
         if(ok) await loadEvents();
       });
     });
@@ -598,6 +573,7 @@ async function loadMyReservationsForRange(startISO, endISO){
     const startISO = view.activeStart.toISOString();
     const endISO = view.activeEnd.toISOString();
 
+    // 選択中の車の予約（カレンダー表示用）
     const { data, error } = await sb
       .from("reservations")
       .select("id, user_id, user_name, start_time, end_time, note")
@@ -631,8 +607,9 @@ async function loadMyReservationsForRange(startISO, endISO){
       });
     });
 
-    // ★追加：カレンダー下に自分の予約一覧を表示
-    renderMyReservations(data);
+    // ★自分の予約一覧は「全車」から取得して表示
+    const myData = await loadMyReservationsForRange(startISO, endISO);
+    renderMyReservations(myData);
   }
 
   function initCalendar(){
@@ -699,16 +676,19 @@ async function loadMyReservationsForRange(startISO, endISO){
         }
 
         const who = info.event.extendedProps.user_name || "不明";
-        await showDialog("予約済み", `利用者：${who}　時間：${start}〜${end}`);
+        await showDialog("予約済み", `利用者：${who}\n時間：${start}〜${end}`);
       }
     });
 
     calendar.render();
   }
 
+  // UIイベント
   $("reloadBtn").addEventListener("click", loadEvents);
   $("car").addEventListener("change", loadEvents);
   $("cancelModalBtn").addEventListener("click", closeReservationModal);
+
+  $("myListFilter").addEventListener("change", loadEvents);
 
   $("saveModalBtn").addEventListener("click", async ()=>{
     try{
@@ -767,6 +747,7 @@ async function loadMyReservationsForRange(startISO, endISO){
     hideNameModal();
   });
 
+  // 起動
   (async ()=>{
     try{
       const ok = await initLiff();
