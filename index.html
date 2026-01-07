@@ -14,11 +14,15 @@
   gap:6px;
   margin-bottom:10px;
 }
-/* 他人の予約：背景ブロック表示（色掛け） */
+/* 他人の予約：色掛け（ブロック）っぽく見せる */
 .fc .busy-other{
   opacity: 0.35;
 }
-
+/* 他人の予約：タイトル文字を消す */
+.fc .busy-other .fc-event-title,
+.fc .busy-other .fc-event-time{
+  display: none !important;
+}
 /* 自分の予約：少し目立たせる（任意） */
 .fc .mine-event{
   font-weight: 600;
@@ -391,15 +395,15 @@ function subscribeCarsRealtime(){
       return;
     }
 
-  calendar.removeAllEvents();
+calendar.removeAllEvents();
 
 data.forEach(r=>{
   const isMine = (r.user_id === me.userId);
 
-  // 表示する文字（自分だけ詳細、他人は表示しない運用が見やすい）
+  // 自分は見えるタイトル、他人は空（文字はCSSで消すので空でOK）
   const title = isMine
     ? `（自分）${r.note ? r.note : ""}`.trim()
-    : ""; // 他人はタイトル無し（背景だけ）
+    : "";
 
   calendar.addEvent({
     id: r.id,
@@ -407,16 +411,16 @@ data.forEach(r=>{
     start: new Date(r.start_time),
     end: new Date(r.end_time),
 
-    // ★ここがポイント：
-    // 他人の予約は「背景イベント」にして色掛けにする
-    display: isMine ? "auto" : "background",
-
-    // CSSクラス付与（見た目調整用）
     classNames: isMine ? ["mine-event"] : ["busy-other"],
 
-    extendedProps: { uid: r.user_id }
+    // ★誰の予約かをクリック時に表示するために入れておく
+    extendedProps: {
+      uid: r.user_id,
+      user_name: r.user_name
+    }
   });
 });
+
 
 
     });
@@ -498,15 +502,37 @@ data.forEach(r=>{
 },
 
       // ✅ 自分の予約だけキャンセル
-      eventClick: async (info)=>{
-        const isMine = info.event.extendedProps.uid === me.userId;
-        if(!isMine){
-          alert("他人の予約はキャンセルできません。");
-          return;
-        }
-        const ok = await cancelReservation(info.event.id);
-        if(ok) await loadEvents();
-      }
+eventClick: async (info)=>{
+  const isMine = info.event.extendedProps.uid === me.userId;
+
+  if(isMine){
+    const ok = await cancelReservation(info.event.id);
+    if(ok) await loadEvents();
+    return;
+  }
+
+  // 他人の予約：予約済み + 利用者 + 時間（24時間表記）
+  const who = info.event.extendedProps.user_name || "不明";
+
+  const fmt = (d) => {
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  };
+
+  const start = info.event.start ? fmt(info.event.start) : "";
+  const end = info.event.end ? fmt(info.event.end) : "";
+  const timeText = (start && end) ? `${start}〜${end}` : "";
+
+  const msg = `利用者：${who}\n時間：${timeText}`;
+
+  if (typeof showDialog === "function") {
+    await showDialog("予約済み", msg);
+  } else {
+    alert(`予約済み\n${msg}`);
+  }
+},
+
     });
     calendar.render();
   }
