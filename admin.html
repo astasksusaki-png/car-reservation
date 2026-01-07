@@ -93,7 +93,6 @@
       liff.login();
       return false;
     }
-    console.log("my userId =", me.userId);
 
     const profile = await liff.getProfile();
     me.userId = profile.userId;
