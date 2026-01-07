@@ -3,332 +3,272 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>社用車予約 管理</title>
-  <style>
-    body{font-family:system-ui, -apple-system, "Segoe UI", sans-serif; margin:16px; line-height:1.5;}
-    .topbar{display:flex; flex-direction:column; align-items:flex-start; gap:6px; margin-bottom:10px;}
-    .small{color:#666; font-size:13px;}
-    .pill{display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:12px; color:#444;}
+  <title>社用車予約（管理画面）</title>
 
-    .card{border:1px solid #ddd; border-radius:12px; padding:14px; margin:12px 0;}
-    label{display:block; margin-top:10px; font-weight:600;}
-    input, select, button{padding:10px; font-size:16px; margin-top:6px;}
+  <style>
+    body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:12px;line-height:1.5;}
+    h2{margin:0 0 8px 0;}
+    h3{margin:16px 0 8px 0; font-size:16px;}
+    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
+    .pill{display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:12px; color:#444;}
+    #status{font-size:13px;color:#666;margin-bottom:10px;}
+
+    input, select, button{padding:10px; font-size:16px;}
     button{cursor:pointer;}
-    table{width:100%; border-collapse:collapse; margin-top:12px;}
-    th,td{border-bottom:1px solid #eee; padding:8px; text-align:left; font-size:14px;}
-    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:end;}
-    .muted{color:#777; font-size:12px;}
-    .ok{color:green;}
-    .ng{color:#c00;}
-    .gridCars{display:grid; grid-template-columns: 80px 1fr 90px; gap:10px; align-items:center; margin-top:10px;}
-    .gridCars div{font-size:14px;}
-    .gridCars input{width:100%; box-sizing:border-box;}
-    h3{margin:0 0 6px 0;}
+    .card{border:1px solid #eee; border-radius:12px; padding:12px; background:#fff;}
+    .small{font-size:12px;color:#666;}
+
+    table{width:100%; border-collapse:collapse; margin-top:8px;}
+    th, td{border-bottom:1px solid #eee; padding:8px; font-size:14px; text-align:left; vertical-align:top;}
+    th{background:#fafafa; position:sticky; top:0;}
+
+    .danger{color:#b00020; font-weight:700;}
   </style>
 
+  <!-- LIFF -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
+
 <body>
-  <div class="topbar">
-    <b>社用車予約 管理</b>
-    <div id="status" class="small">初期化中…</div>
-    <div class="small">予約表示名：<span id="displayName" class="pill">未設定</span></div>
+  <h2><b>社用車予約（管理画面）</b></h2>
+  <div id="status">初期化中…</div>
+
+  <div class="row">
+    <span class="small">ログイン：</span>
+    <span id="meName" class="pill">未ログイン</span>
   </div>
 
-  <!-- 車名編集 -->
-  <div class="card">
-    <h3>車名の編集</h3>
-    <div class="muted">※ここで変更すると予約画面・管理画面の表示に反映されます</div>
-    <div id="carsEditor" class="gridCars"></div>
-    <div id="carMsg" class="small"></div>
-    <div style="margin-top:10px;">
-      <button id="reloadCarsBtn">車一覧を再読み込み</button>
-    </div>
+  <!-- ✅ ①車名編集（上に配置） -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin-top:0;">車名の編集</h3>
+    <div class="small">※変更したい車名を入力して「保存」してください（即反映）</div>
+    <div id="carsBox" style="margin-top:10px;">読み込み中…</div>
   </div>
 
-  <!-- 予約一覧 -->
-  <div class="card">
-    <h3>予約一覧</h3>
-
-    <div class="row">
-      <div>
-        <label>車</label>
-        <select id="car"></select>
-      </div>
-      <div>
-        <label>開始（この日時以降）</label>
-        <input id="from" type="datetime-local" />
-      </div>
-      <div>
-        <label>終了（この日時以前）</label>
-        <input id="to" type="datetime-local" />
-      </div>
-      <div>
-        <button id="loadBtn">検索</button>
-      </div>
-      <div>
-        <button id="csvBtn">CSV出力</button>
-      </div>
+  <!-- ✅ ②予約一覧（下に配置／新しい順） -->
+  <div class="card" style="margin-top:12px;">
+    <div class="row" style="justify-content:space-between;">
+      <h3 style="margin:0;">予約一覧（新しい順）</h3>
+      <button id="reloadBtn">再読み込み</button>
+    </div>
+    <div class="row" style="margin-top:6px;">
+      <span class="small">表示：</span>
+      <select id="carFilter">
+        <option value="all">全車</option>
+      </select>
+      <span class="small">※予約数が少ない前提で、一覧は全件表示</span>
     </div>
 
-    <div id="result" class="small"></div>
-    <div id="tableWrap"></div>
+    <div id="reservationsBox" style="margin-top:10px;">読み込み中…</div>
   </div>
 
 <script>
-  // ✅ あなたの値（正しいANON_KEYに統一）
+  // ✅ あなたの値（index と同じでOK）
   const LIFF_ID = "2008829976-rJa7ANlR";
   const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
 
-  // ★ここに「あなたの管理者userId」を入れる
-  const ADMIN_USER_IDS = [
-    "Ue8aba629033a4c537f7d1f83bda08051"
-  ];
-
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const $ = (id)=>document.getElementById(id);
 
-  let me = { userId:null, displayName:null };
-  let rowsCache = [];
-  let carsCache = [];
+  const me = { userId:null, displayName:null };
+  let carsMap = {}; // {id: name}
 
-  function toISO(dtLocal){
-    if(!dtLocal) return null;
-    return new Date(dtLocal).toISOString();
+  function setStatus(t){ $("status").textContent = t; }
+
+  const pad = (n)=>String(n).padStart(2,"0");
+  function fmtYmd(d){
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  }
+  function fmtHm(d){
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  function setCarMsg(text, ok=true){
-    const el = $("carMsg");
-    el.textContent = text;
-    el.className = "small " + (ok ? "ok" : "ng");
+  async function initLiff(){
+    await liff.init({ liffId: LIFF_ID });
+    if(!liff.isLoggedIn()){
+      setStatus("未ログイン：ログインします…");
+      liff.login();
+      return false;
+    }
+    const profile = await liff.getProfile();
+    me.userId = profile.userId;
+    me.displayName = profile.displayName;
+    $("meName").textContent = me.displayName;
+    return true;
   }
 
-  function escapeHtml(str){
-    return (str ?? "")
-      .replaceAll("&","&amp;")
-      .replaceAll("<","&lt;")
-      .replaceAll(">","&gt;")
-      .replaceAll('"',"&quot;");
-  }
-
-  function carNameById(id){
-    const c = carsCache.find(x => Number(x.id) === Number(id));
-    return c ? c.name : `車ID:${id}`;
-  }
-
-  async function loadUserFullName(){
-    // users テーブル（苗字・名前）から取得（無ければLINE表示名）
+  // ✅ 管理者チェック（あなたの環境のテーブル名に合わせてください）
+  // 例：admins テーブル： user_id (text) が入っている想定
+  async function requireAdmin(){
     const { data, error } = await sb
-      .from("users")
-      .select("last_name, first_name")
+      .from("admins")
+      .select("user_id")
       .eq("user_id", me.userId)
       .maybeSingle();
 
     if(error){
-      console.error("users load error:", error);
-      $("displayName").textContent = me.displayName;
-      return;
+      console.error(error);
+      setStatus("初期化エラー：管理者テーブル確認に失敗");
+      $("reservationsBox").innerHTML = `<div class="danger">管理者チェックに失敗しました。admins テーブル名/権限を確認してください。</div>`;
+      throw error;
     }
-    if(data && data.last_name && data.first_name){
-      $("displayName").textContent = `${data.last_name} ${data.first_name}`;
-    }else{
-      $("displayName").textContent = me.displayName;
+
+    if(!data){
+      setStatus("アクセス拒否（管理者のみ）");
+      document.body.innerHTML = `
+        <h2 class="danger">アクセス拒否（管理者のみ）</h2>
+        <div class="small">このアカウントは管理者ではありません。</div>
+      `;
+      throw new Error("not admin");
     }
   }
 
   async function loadCars(){
     const { data, error } = await sb.from("cars").select("*").order("id");
     if(error) throw error;
-    carsCache = data;
 
-    // 検索用プルダウン
-    $("car").innerHTML =
-      `<option value="">（全車）</option>` +
-      data.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+    carsMap = {};
+    data.forEach(c => carsMap[c.id] = c.name);
 
-    renderCarsEditor();
-  }
+    // 車フィルタ
+    const current = $("carFilter").value;
+    const opts = [`<option value="all">全車</option>`]
+      .concat(data.map(c=>`<option value="${c.id}">${c.name}</option>`));
+    $("carFilter").innerHTML = opts.join("");
+    if(current) $("carFilter").value = current;
 
-  function renderCarsEditor(){
-    const wrap = $("carsEditor");
-    if(!carsCache || carsCache.length === 0){
-      wrap.innerHTML = "<div class='small'>車データがありません</div>";
-      return;
-    }
-
-    wrap.innerHTML = `
-      <div class="muted"><b>ID</b></div>
-      <div class="muted"><b>車名</b></div>
-      <div></div>
-      ${carsCache.map(c => `
-        <div>${c.id}</div>
-        <div><input id="carName_${c.id}" type="text" value="${escapeHtml(c.name)}" /></div>
-        <div><button onclick="saveCarName(${c.id})">保存</button></div>
-      `).join("")}
+    // 車名編集UI
+    $("carsBox").innerHTML = `
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        ${data.map(c=>{
+          return `
+            <div class="row">
+              <span class="pill">ID:${c.id}</span>
+              <input id="carName_${c.id}" type="text" value="${(c.name||"").replaceAll('"','&quot;')}" style="flex:1; min-width:220px;">
+              <button data-save-car="${c.id}">保存</button>
+            </div>
+          `;
+        }).join("")}
+      </div>
     `;
-    setCarMsg("");
+
+    // 保存イベント
+    document.querySelectorAll("button[data-save-car]").forEach(btn=>{
+      btn.addEventListener("click", async ()=>{
+        const id = Number(btn.getAttribute("data-save-car"));
+        const input = document.getElementById(`carName_${id}`);
+        const name = (input?.value || "").trim();
+        if(!name){
+          alert("車名を入力してください。");
+          return;
+        }
+        btn.disabled = true;
+        try{
+          const { error } = await sb.from("cars").update({ name }).eq("id", id);
+          if(error) throw error;
+          await loadCars();         // carsMap更新＋UI更新
+          await loadReservations(); // 一覧も車名反映
+          alert("保存しました。");
+        }catch(e){
+          console.error(e);
+          alert("保存に失敗しました。");
+        }finally{
+          btn.disabled = false;
+        }
+      });
+    });
   }
 
-  async function saveCarName(id){
-    try{
-      const input = document.getElementById(`carName_${id}`);
-      const newName = (input?.value ?? "").trim();
-      if(!newName){
-        setCarMsg("車名は空にできません。", false);
-        return;
-      }
-
-      const { error } = await sb.from("cars").update({ name: newName }).eq("id", id);
-      if(error){
-        console.error("cars update error:", error);
-        setCarMsg("保存に失敗しました（RLS/権限を確認）", false);
-        return;
-      }
-
-      carsCache = carsCache.map(c => Number(c.id) === Number(id) ? ({...c, name:newName}) : c);
-
-      // 検索プルダウンも更新
-      const opt = $("car").querySelector(`option[value="${id}"]`);
-      if(opt) opt.textContent = newName;
-
-      setCarMsg(`保存しました：ID ${id} → ${newName}`, true);
-    }catch(e){
-      console.error(e);
-      setCarMsg("保存時にエラーが発生しました", false);
-    }
-  }
-  window.saveCarName = saveCarName;
-
-  async function search(){
-    const carId = $("car").value ? Number($("car").value) : null;
-    const fromISO = toISO($("from").value);
-    const toISOv = toISO($("to").value);
+  // ✅ 予約一覧：新しい順（start_time DESC）
+  async function loadReservations(){
+    const filter = $("carFilter").value;
 
     let q = sb
       .from("reservations")
-      .select("id, car_id, user_name, user_id, start_time, end_time, note, created_at")
-      .order("start_time", { ascending: true })
-      .limit(500);
+      .select("id, car_id, user_name, start_time, end_time, note")
+      .order("start_time", { ascending: false }); // ★ここが「新しい順」
 
-    if(carId) q = q.eq("car_id", carId);
-    if(fromISO) q = q.gte("start_time", fromISO);
-    if(toISOv) q = q.lte("end_time", toISOv);
+    if(filter !== "all"){
+      q = q.eq("car_id", Number(filter));
+    }
 
     const { data, error } = await q;
-    if(error){
-      console.error("search error:", error);
-      $("result").textContent = "検索エラー：DB/RLS/設定を確認";
+    if(error) throw error;
+
+    if(!data || data.length === 0){
+      $("reservationsBox").innerHTML = `<div class="small">予約がありません。</div>`;
       return;
     }
 
-    rowsCache = data;
-    $("result").textContent = `${data.length} 件`;
-    renderTable(data);
-  }
-
-  function renderTable(data){
-    if(data.length === 0){
-      $("tableWrap").innerHTML = "<p class='small'>データなし</p>";
-      return;
-    }
-
-    const html = `
-      <table>
-        <thead>
-          <tr>
-            <th>車</th>
-            <th>開始</th>
-            <th>終了</th>
-            <th>利用者</th>
-            <th>用途</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${data.map(r=>{
-            const car = carNameById(r.car_id);
-            const s = new Date(r.start_time).toLocaleString("ja-JP", { hour12:false });
-            const e = new Date(r.end_time).toLocaleString("ja-JP", { hour12:false });
-            const note = r.note ?? "";
-            return `<tr>
-              <td>${escapeHtml(car)}</td>
-              <td>${escapeHtml(s)}</td>
-              <td>${escapeHtml(e)}</td>
-              <td>${escapeHtml(r.user_name ?? "")}</td>
-              <td>${escapeHtml(note)}</td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
+    $("reservationsBox").innerHTML = `
+      <div style="overflow:auto; max-height:55vh;">
+        <table>
+          <thead>
+            <tr>
+              <th>車</th>
+              <th>日付</th>
+              <th>時間</th>
+              <th>利用者</th>
+              <th>用途メモ</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map(r=>{
+              const carName = carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`;
+              const s = new Date(r.start_time);
+              const e = new Date(r.end_time);
+              const ymd = fmtYmd(s);
+              const time = `${fmtHm(s)}〜${fmtHm(e)}`;
+              const user = r.user_name || "";
+              const note = (r.note || "");
+              return `
+                <tr>
+                  <td>${carName}</td>
+                  <td>${ymd}</td>
+                  <td>${time}</td>
+                  <td>${user}</td>
+                  <td>${note}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
     `;
-    $("tableWrap").innerHTML = html;
   }
 
-  function download(filename, text){
-    const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  function exportCSV(){
-    if(rowsCache.length === 0){
-      alert("先に検索してください");
-      return;
+  // UI
+  $("reloadBtn").addEventListener("click", async ()=>{
+    try{
+      await loadCars();
+      await loadReservations();
+    }catch(e){
+      console.error(e);
+      alert("再読み込みに失敗しました。");
     }
-    const header = ["car","start_time","end_time","user_name","user_id","note"].join(",");
-    const lines = rowsCache.map(r=>{
-      const car = (carNameById(r.car_id) ?? "").replaceAll('"','""');
-      const note = (r.note ?? "").replaceAll('"','""');
-      return [
-        `"${car}"`,
-        `"${r.start_time}"`,
-        `"${r.end_time}"`,
-        `"${(r.user_name ?? "").replaceAll('"','""')}"`,
-        `"${(r.user_id ?? "").replaceAll('"','""')}"`,
-        `"${note}"`
-      ].join(",");
-    });
-    download("reservations.csv", [header, ...lines].join("\n"));
-  }
-
-  async function init(){
-    await liff.init({ liffId: LIFF_ID });
-
-    if(!liff.isLoggedIn()){
-      $("status").textContent = "未ログイン：ログインします…";
-      liff.login();
-      return;
-    }
-
-    const profile = await liff.getProfile();
-    me.userId = profile.userId;
-    me.displayName = profile.displayName;
-
-    if(!ADMIN_USER_IDS.includes(me.userId)){
-      $("status").textContent = "アクセス拒否（管理者のみ）";
-      $("tableWrap").innerHTML = "";
-      return;
-    }
-
-    $("status").textContent = `管理者：${me.displayName}`;
-
-    await loadUserFullName();
-    await loadCars();
-  }
-
-  $("loadBtn").addEventListener("click", search);
-  $("csvBtn").addEventListener("click", exportCSV);
-  $("reloadCarsBtn").addEventListener("click", loadCars);
-
-  init().catch(e=>{
-    console.error("init error:", e);
-    $("status").textContent = "初期化エラー：LIFF/Supabase設定を確認（Consoleを見てください）";
   });
+  $("carFilter").addEventListener("change", loadReservations);
+
+  // 起動
+  (async ()=>{
+    try{
+      const ok = await initLiff();
+      if(!ok) return;
+
+      await requireAdmin();
+
+      setStatus("読み込み中…");
+      await loadCars();
+      await loadReservations();
+      setStatus("表示中");
+    }catch(e){
+      // not admin などはここに来る
+      console.error(e);
+    }
+  })();
 </script>
 </body>
 </html>
