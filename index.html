@@ -173,19 +173,17 @@
   }
 
   function round15(d){
-    // クリック時刻のズレ防止（15分単位に丸め）
-    const dt = new Date(d);
-    dt.setSeconds(0,0);
-    const m = dt.getMinutes();
-    const rounded = Math.round(m / 15) * 15;
-    if (rounded === 60) {
-      dt.setHours(dt.getHours() + 1);
-      dt.setMinutes(0);
-    } else {
-      dt.setMinutes(rounded);
-    }
-    return dt;
-  }
+  // ✅ 15分単位に「切り下げ」する（タップした枠より先に飛ばない）
+  const dt = new Date(d);
+  dt.setSeconds(0, 0);
+
+  const m = dt.getMinutes();
+  const floored = Math.floor(m / 15) * 15;
+  dt.setMinutes(floored);
+
+  return dt;
+}
+
 
   function toISOFromYmdTime(ymd, hhmm){
     // "24:00" は翌日00:00に変換
