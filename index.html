@@ -443,12 +443,38 @@ function subscribeCarsRealtime(){
 
       // ✅ タップで予約モーダル
       dateClick:(info)=>{
-        if(info.allDay){
-          openReservationModal(info.date, true);    // 終日：00:00〜24:00
-        }else{
-          openReservationModal(info.date, false);   // 時間：クリック時刻（15分丸め）
-        }
-      },
+  if(info.allDay){
+    openReservationModal(info.date, true); // 終日は今のままでOK
+    return;
+  }
+
+  // ✅ Dateを使わず、画面上の時刻文字列から開始時刻を決める（9時間ズレ対策）
+  const picked = floorTo15FromDateStr(info.dateStr);
+  if(!picked){
+    // 予備：取れない時だけDateで（通常ここには来ない）
+    openReservationModal(info.date, false);
+    return;
+  }
+
+  // openReservationModal を少しだけ“文字列で指定”できるようにする
+  modalYmd = picked.ymd;
+
+  $("startSel").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
+  $("endSel").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
+
+  $("startSel").value = picked.hhmm;
+
+  // 終了は開始+30分（最大24:00）
+  const [h, m] = picked.hhmm.split(":").map(Number);
+  const startMin = h*60 + m;
+  const endMin = Math.min(startMin + 30, 24*60);
+  const endDefault = (endMin >= 24*60) ? "24:00" : `${String(Math.floor(endMin/60)).padStart(2,"0")}:${String(endMin%60).padStart(2,"0")}`;
+  $("endSel").value = endDefault;
+
+  $("note").value = "";
+  $("modalDate").textContent = `${modalYmd}`;
+  $("overlay").style.display = "flex";
+},
 
       // ✅ 自分の予約だけキャンセル
       eventClick: async (info)=>{
@@ -548,6 +574,24 @@ subscribeCarsRealtime();
       alert("初期化に失敗しました。");
     }
   })();
+  function floorTo15FromDateStr(dateStr){
+  // dateStr例：
+  // "2026-01-07T06:00:00+09:00" や "2026-01-07T06:00:00"
+  // → ここから "YYYY-MM-DD" と "HH:MM" を取り出して 15分切り下げする
+
+  const m = dateStr.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+  if(!m) return null;
+
+  const ymd = m[1];
+  const hh = m[2];
+  const mm = parseInt(m[3], 10);
+
+  const floored = Math.floor(mm / 15) * 15;
+  const mm2 = String(floored).padStart(2, "0");
+
+  return { ymd, hhmm: `${hh}:${mm2}` };
+}
+
 </script>
 </body>
 </html>
