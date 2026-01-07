@@ -6,6 +6,10 @@
   <title>社用車予約 管理</title>
   <style>
     body{font-family:system-ui, -apple-system, "Segoe UI", sans-serif; margin:16px; line-height:1.5;}
+    .topbar{display:flex; flex-direction:column; align-items:flex-start; gap:6px; margin-bottom:10px;}
+    .small{color:#666; font-size:13px;}
+    .pill{display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:12px; color:#444;}
+
     .card{border:1px solid #ddd; border-radius:12px; padding:14px; margin:12px 0;}
     label{display:block; margin-top:10px; font-weight:600;}
     input, select, button{padding:10px; font-size:16px; margin-top:6px;}
@@ -13,16 +17,19 @@
     table{width:100%; border-collapse:collapse; margin-top:12px;}
     th,td{border-bottom:1px solid #eee; padding:8px; text-align:left; font-size:14px;}
     .row{display:flex; gap:10px; flex-wrap:wrap; align-items:end;}
-    .small{color:#666; font-size:13px;}
   </style>
+
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-  <h1>社用車予約 管理</h1>
-  <div class="card">
+  <div class="topbar">
+    <b>社用車予約 管理</b>
     <div id="status" class="small">初期化中…</div>
+    <div class="small">予約表示名：<span id="displayName" class="pill">未設定</span></div>
+  </div>
 
+  <div class="card">
     <div class="row">
       <div>
         <label>車</label>
@@ -49,19 +56,20 @@
   </div>
 
 <script>
-  // ★ここをあなたの値に差し替え
- const LIFF_ID = "2008829976-rJa7ANlR";
+  // ✅ あなたの値
+  const LIFF_ID = "2008829976-rJa7ANlR";
   const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
 
-  // ★管理者のLINE userIdをここに列挙（あなたのuserIdを入れる）
+  // ★ここに「あなたの管理者userId」を入れる（Supabase reservations.user_idで取った値）
   const ADMIN_USER_IDS = [
     "Ue8aba629033a4c537f7d1f83bda08051"
   ];
 
-  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  const $ = (id) => document.getElementById(id);
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = (id)=>document.getElementById(id);
 
+  let me = { userId:null, displayName:null };
   let rowsCache = [];
 
   function toISO(dtLocal){
@@ -69,43 +77,31 @@
     return new Date(dtLocal).toISOString();
   }
 
-  function download(filename, text){
-    const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
-  async function init(){
-    await liff.init({ liffId: LIFF_ID });
-
-    if (!liff.isLoggedIn()) {
-      $("status").textContent = "未ログイン：ログインします…";
-      liff.login();
-      return;
-    }
-
-    const profile = await liff.getProfile();
-    const me = { userId: profile.userId, displayName: profile.displayName };
-
-   if(!ADMIN_USER_IDS.includes(me.userId)){
-  $("status").innerHTML = `アクセス拒否（管理者のみ）`;
-  $("tableWrap").innerHTML = "";
-  return;
-}
-
-
-    $("status").innerHTML = `管理者：${me.displayName}`;
-    await loadCars();
-  }
-
   async function loadCars(){
     const { data, error } = await sb.from("cars").select("*").order("id");
     if(error) throw error;
     $("car").innerHTML = `<option value="">（全車）</option>` + data.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+  }
+
+  async function loadUserFullName(){
+    // users テーブル（苗字・名前）から取得
+    const { data, error } = await sb
+      .from("users")
+      .select("last_name, first_name")
+      .eq("user_id", me.userId)
+      .maybeSingle();
+
+    if(error){
+      console.error(error);
+      $("displayName").textContent = me.displayName; // フォールバック
+      return;
+    }
+
+    if(data && data.last_name && data.first_name){
+      $("displayName").textContent = `${data.last_name} ${data.first_name}`;
+    } else {
+      $("displayName").textContent = me.displayName; // 未登録ならLINE名
+    }
   }
 
   async function search(){
@@ -132,7 +128,6 @@
 
     rowsCache = data;
     $("result").textContent = `${data.length} 件`;
-
     renderTable(data);
   }
 
@@ -156,8 +151,8 @@
         <tbody>
           ${data.map(r=>{
             const car = r.cars?.name ?? ("車ID:" + r.car_id);
-            const s = new Date(r.start_time).toLocaleString();
-            const e = new Date(r.end_time).toLocaleString();
+            const s = new Date(r.start_time).toLocaleString("ja-JP", { hour12:false });
+            const e = new Date(r.end_time).toLocaleString("ja-JP", { hour12:false });
             const note = r.note ?? "";
             return `<tr>
               <td>${car}</td>
@@ -171,6 +166,16 @@
       </table>
     `;
     $("tableWrap").innerHTML = html;
+  }
+
+  function download(filename, text){
+    const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function exportCSV(){
@@ -194,12 +199,37 @@
     download("reservations.csv", [header, ...lines].join("\n"));
   }
 
+  async function init(){
+    await liff.init({ liffId: LIFF_ID });
+
+    if(!liff.isLoggedIn()){
+      $("status").textContent = "未ログイン：ログインします…";
+      liff.login();
+      return;
+    }
+
+    const profile = await liff.getProfile();
+    me.userId = profile.userId;
+    me.displayName = profile.displayName;
+
+    if(!ADMIN_USER_IDS.includes(me.userId)){
+      $("status").innerHTML = "アクセス拒否（管理者のみ）";
+      $("tableWrap").innerHTML = "";
+      return;
+    }
+
+    $("status").innerHTML = `管理者：${me.displayName}`;
+
+    await loadUserFullName();
+    await loadCars();
+  }
+
   $("loadBtn").addEventListener("click", search);
   $("csvBtn").addEventListener("click", exportCSV);
 
   init().catch(e=>{
     console.error(e);
-    $("status").textContent = "初期化エラー：LIFF_ID / SUPABASE 設定を確認";
+    $("status").textContent = "初期化エラー：LIFF/Supabase設定を確認";
   });
 </script>
 </body>
