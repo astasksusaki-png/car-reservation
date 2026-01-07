@@ -89,6 +89,16 @@
     .myCardTitle{font-size:14px;}
     .myBtns{display:flex; gap:8px; align-items:center;}
     .myBtns button{padding:8px 10px; font-size:14px;}
+
+    /* 日付見出し */
+    .dayHeader{
+      margin:14px 0 8px 0;
+      padding:6px 10px;
+      border-radius:10px;
+      background:#f6f6f6;
+      font-weight:700;
+      font-size:14px;
+    }
   </style>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -117,7 +127,7 @@
 
   <div id="calendar"></div>
 
-  <!-- ✅ 自分の予約一覧（全車／今日以降すべて） -->
+  <!-- ✅ 自分の予約一覧（全車／今日以降すべて／日付ごとにまとめる） -->
   <div id="myList" style="margin-top:12px;">
     <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧（全車／今日以降すべて）</h3>
     <div id="myListBody" class="small">読み込み中…</div>
@@ -472,14 +482,15 @@
       .from("reservations")
       .select("id, car_id, user_id, start_time, end_time, note")
       .eq("user_id", me.userId)
-      .gte("end_time", start)   // まだ終わってない予約を残す（開始済みも含む）
+      .gte("end_time", start)
       .order("start_time", { ascending: true });
 
     if(error) throw error;
     return data || [];
   }
 
-  function renderMyReservations(myData){
+  // ✅ 日付ごとにグループ化して描画
+  function renderMyReservationsGrouped(myData){
     const el = $("myListBody");
     if(!el) return;
 
@@ -499,37 +510,53 @@
       return;
     }
 
-    el.innerHTML = `
-      <div style="display:flex; flex-direction:column; gap:8px;">
-        ${list.map(item=>{
-          const ymd = fmtDateYmd(item.start);
-          const s = fmtTimeHM(item.start);
-          const e = fmtTimeHM(item.end);
-          const note = item.note ? `（${escapeHtml(item.note)}）` : "";
+    // グループ：{ ymd: [items...] }
+    const groups = {};
+    list.forEach(item=>{
+      const ymd = fmtDateYmd(item.start);
+      if(!groups[ymd]) groups[ymd] = [];
+      groups[ymd].push(item);
+    });
 
-          return `
-            <div class="myCard">
-              <div class="myRow">
-                <div class="myCardTitle">
-                  <b>${ymd}</b> ${s}〜${e} ${note}<br>
-                  <span class="small">車：${escapeHtml(item.carName)}</span>
-                </div>
-                <div class="myBtns">
-                  <button
-                    data-cancel-id="${item.id}"
-                    data-cancel-carname="${escapeHtml(item.carName)}"
-                    data-cancel-date="${ymd}"
-                    data-cancel-start="${s}"
-                    data-cancel-end="${e}">
-                    キャンセル
-                  </button>
-                </div>
+    const ymds = Object.keys(groups).sort();
+
+    el.innerHTML = ymds.map(ymd=>{
+      const items = groups[ymd];
+
+      const cards = items.map(item=>{
+        const s = fmtTimeHM(item.start);
+        const e = fmtTimeHM(item.end);
+        const note = item.note ? `（${escapeHtml(item.note)}）` : "";
+
+        return `
+          <div class="myCard">
+            <div class="myRow">
+              <div class="myCardTitle">
+                ${s}〜${e} ${note}<br>
+                <span class="small">車：${escapeHtml(item.carName)}</span>
+              </div>
+              <div class="myBtns">
+                <button
+                  data-cancel-id="${item.id}"
+                  data-cancel-carname="${escapeHtml(item.carName)}"
+                  data-cancel-date="${ymd}"
+                  data-cancel-start="${s}"
+                  data-cancel-end="${e}">
+                  キャンセル
+                </button>
               </div>
             </div>
-          `;
-        }).join("")}
-      </div>
-    `;
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="dayHeader">${ymd}</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          ${cards}
+        </div>
+      `;
+    }).join("");
 
     // キャンセル（一覧から）
     el.querySelectorAll("button[data-cancel-id]").forEach(btn=>{
@@ -589,9 +616,9 @@
       });
     });
 
-    // ★自分の予約一覧（今日以降すべて）を更新
+    // ★自分の予約一覧（今日以降すべて）を日付ごとにまとめて表示
     const myData = await loadMyReservationsFromToday();
-    renderMyReservations(myData);
+    renderMyReservationsGrouped(myData);
   }
 
   function initCalendar(){
