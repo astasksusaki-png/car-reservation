@@ -14,6 +14,15 @@
   gap:6px;
   margin-bottom:10px;
 }
+/* 他人の予約：背景ブロック表示（色掛け） */
+.fc .busy-other{
+  opacity: 0.35;
+}
+
+/* 自分の予約：少し目立たせる（任意） */
+.fc .mine-event{
+  font-weight: 600;
+}
 
     .badge{font-size:13px; color:#444;}
     select, button, input{padding:10px; font-size:16px;}
@@ -382,22 +391,33 @@ function subscribeCarsRealtime(){
       return;
     }
 
-    calendar.removeAllEvents();
+  calendar.removeAllEvents();
 
-    data.forEach(r=>{
-      const isMine = (r.user_id === me.userId);
-      const title = isMine
-        ? `（自分）${r.note ? r.note : ""}`.trim()
-        : `${r.user_name}${r.note ? " / " + r.note : ""}`;
+data.forEach(r=>{
+  const isMine = (r.user_id === me.userId);
 
-     calendar.addEvent({
-  id: r.id,
-  title,
-  // ★ここがポイント：Z付きISOに正規化して渡す
-  start: new Date(r.start_time).toISOString(),
-  end: new Date(r.end_time).toISOString(),
-  extendedProps: { uid: r.user_id }
+  // 表示する文字（自分だけ詳細、他人は表示しない運用が見やすい）
+  const title = isMine
+    ? `（自分）${r.note ? r.note : ""}`.trim()
+    : ""; // 他人はタイトル無し（背景だけ）
+
+  calendar.addEvent({
+    id: r.id,
+    title,
+    start: new Date(r.start_time),
+    end: new Date(r.end_time),
+
+    // ★ここがポイント：
+    // 他人の予約は「背景イベント」にして色掛けにする
+    display: isMine ? "auto" : "background",
+
+    // CSSクラス付与（見た目調整用）
+    classNames: isMine ? ["mine-event"] : ["busy-other"],
+
+    extendedProps: { uid: r.user_id }
+  });
 });
+
 
     });
   }
