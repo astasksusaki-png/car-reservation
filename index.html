@@ -80,6 +80,14 @@
     .myCardTitle{font-size:14px;}
     .myCardActions{margin-top:8px; display:flex; justify-content:flex-end;}
     .myCardActions button{padding:8px 10px; font-size:14px;}
+
+    .myRow{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
   </style>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -475,14 +483,21 @@
           const s = fmtTimeHM(item.start);
           const e = fmtTimeHM(item.end);
           const note = item.note ? `（${escapeHtml(item.note)}）` : "";
-          return `
-            <div class="myCard">
-              <div class="myCardTitle"><b>${ymd}</b> ${s}〜${e} ${note}</div>
-              <div class="myCardActions">
-                <button data-id="${item.id}" data-ymd="${ymd}" data-s="${s}" data-e="${e}">キャンセル</button>
-              </div>
-            </div>
-          `;
+         return `
+  <div class="myCard">
+    <div class="myRow">
+      <div class="myCardTitle"><b>${ymd}</b> ${s}〜${e} ${note}</div>
+      <button
+        data-id="${item.id}"
+        data-ymd="${ymd}"
+        data-s="${s}"
+        data-e="${e}">
+        キャンセル
+      </button>
+    </div>
+  </div>
+`;
+
         }).join("")}
       </div>
     `;
