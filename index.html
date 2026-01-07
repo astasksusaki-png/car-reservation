@@ -325,7 +325,8 @@ function subscribeCarsRealtime(){
   async function createReservation(carId, startISO, endISO, note){
     const overlap = await hasOverlap(carId, startISO, endISO);
     if(overlap){
-      alert("その時間帯は既に予約があります。別の時間にしてください。");
+     await showDialog("予約できません"<br> "その時間帯はすでに予約があります。別の車両か時間を変更してください。");
+
       return false;
     }
 
@@ -591,7 +592,35 @@ subscribeCarsRealtime();
 
   return { ymd, hhmm: `${hh}:${mm2}` };
 }
+function showDialog(title, message){
+  const ov = document.getElementById("dlgOverlay");
+  document.getElementById("dlgTitle").textContent = title;
+  document.getElementById("dlgMsg").textContent = message;
+
+  ov.style.display = "flex";
+
+  return new Promise(resolve => {
+    const btn = document.getElementById("dlgOkBtn");
+    const handler = () => {
+      btn.removeEventListener("click", handler);
+      ov.style.display = "none";
+      resolve(true);
+    };
+    btn.addEventListener("click", handler);
+  });
+}
 
 </script>
+    <!-- 共通ダイアログ（alert代わり） -->
+<div id="dlgOverlay" class="overlay">
+  <div class="modal">
+    <h3 id="dlgTitle">お知らせ</h3>
+    <div id="dlgMsg" style="margin-top:8px;"></div>
+    <div class="actions" style="margin-top:12px;">
+      <button id="dlgOkBtn">OK</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
