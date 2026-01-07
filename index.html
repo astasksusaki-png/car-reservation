@@ -98,6 +98,11 @@
   </div>
 
   <div id="calendar"></div>
+<!-- 自分の予約一覧（カレンダー下） -->
+<div id="myList" style="margin-top:12px;">
+  <h3 style="margin:10px 0 6px 0; font-size:16px;">自分の予約一覧</h3>
+  <div id="myListBody" class="small">読み込み中…</div>
+</div>
 
   <!-- 予約モーダル -->
   <div id="overlay" class="overlay">
@@ -124,6 +129,83 @@
         <button id="saveModalBtn">予約する</button>
       </div>
     </div>
+    function fmtDateYmd(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+function fmtTimeHM(d){
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+function renderMyReservations(data){
+  const el = $("myListBody");
+  if(!el) return;
+
+  // 今表示している期間のうち「自分の予約」だけ
+  const mine = (data || [])
+    .filter(r => r.user_id === me.userId)
+    .map(r => ({
+      id: r.id,
+      start: new Date(r.start_time),
+      end: new Date(r.end_time),
+      note: (r.note || "").trim()
+    }))
+    .sort((a,b)=>a.start - b.start);
+
+  if(mine.length === 0){
+    el.textContent = "この期間の予約はありません。";
+    return;
+  }
+
+  const carName = getSelectedCarName();
+
+  el.innerHTML = `
+    <div style="display:flex; flex-direction:column; gap:8px;">
+      ${mine.map(item=>{
+        const ymd = fmtDateYmd(item.start);
+        const s = fmtTimeHM(item.start);
+        const e = fmtTimeHM(item.end);
+        const note = item.note ? `（${escapeHtml(item.note)}）` : "";
+        return `
+          <div style="border:1px solid #eee; border-radius:12px; padding:10px;">
+            <div style="font-size:14px;"><b>${ymd}</b> ${s}〜${e} ${note}</div>
+            <div style="margin-top:8px; display:flex; gap:8px; justify-content:flex-end;">
+              <button
+                data-cancel-id="${item.id}"
+                data-cancel-date="${ymd}"
+                data-cancel-start="${s}"
+                data-cancel-end="${e}"
+                style="padding:8px 10px; font-size:14px;">
+                キャンセル
+              </button>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+
+  el.querySelectorAll("button[data-cancel-id]").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      const id = btn.getAttribute("data-cancel-id");
+      const dateText = btn.getAttribute("data-cancel-date");
+      const startText = btn.getAttribute("data-cancel-start");
+      const endText = btn.getAttribute("data-cancel-end");
+
+      const ok = await cancelReservation(id, carName, dateText, startText, endText);
+      if(ok) await loadEvents();
+    });
+  });
+}
+
+// メモを安全に表示する（既にあってもOK）
+function escapeHtml(str){
+  return (str ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;");
+}
+
   </div>
 
   <!-- 初回ログイン：名前入力モーダル -->
@@ -443,22 +525,27 @@ const msg =
 
     calendar.removeAllEvents();
 
-    data.forEach(r=>{
-      const isMine = (r.user_id === me.userId);
-      const title = isMine ? `（自分）${r.note ? r.note : ""}`.trim() : "";
+   data.forEach(r=>{
+  const isMine = (r.user_id === me.userId);
+  const title = isMine ? `（自分）${r.note ? r.note : ""}`.trim() : "";
 
-      calendar.addEvent({
-        id: r.id,
-        title,
-        start: new Date(r.start_time),
-        end: new Date(r.end_time),
-        classNames: isMine ? ["mine-event"] : ["busy-other"],
-        extendedProps: {
-          uid: r.user_id,
-          user_name: r.user_name
-        }
-      });
-    });
+  calendar.addEvent({
+    id: r.id,
+    title,
+    start: new Date(r.start_time),
+    end: new Date(r.end_time),
+    classNames: isMine ? ["mine-event"] : ["busy-other"],
+    extendedProps: {
+      uid: r.user_id,
+      user_name: r.user_name
+    }
+  });
+});
+
+// ★追加
+renderMyReservations(data);
+
+
   }
 
   function initCalendar(){
