@@ -17,6 +17,12 @@
     table{width:100%; border-collapse:collapse; margin-top:12px;}
     th,td{border-bottom:1px solid #eee; padding:8px; text-align:left; font-size:14px;}
     .row{display:flex; gap:10px; flex-wrap:wrap; align-items:end;}
+    .muted{color:#777; font-size:12px;}
+    .ok{color:green;}
+    .ng{color:#c00;}
+    .gridCars{display:grid; grid-template-columns: 120px 1fr 120px; gap:10px; align-items:center; margin-top:10px;}
+    .gridCars div{font-size:14px;}
+    .gridCars input{width:100%; box-sizing:border-box;}
   </style>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -29,7 +35,21 @@
     <div class="small">予約表示名：<span id="displayName" class="pill">未設定</span></div>
   </div>
 
+  <!-- 車名編集 -->
   <div class="card">
+    <h3 style="margin:0 0 6px 0;">車名の編集</h3>
+    <div class="muted">※ここで変更すると予約画面・管理画面の表示に即反映されます</div>
+    <div id="carsEditor" class="gridCars"></div>
+    <div id="carMsg" class="small"></div>
+    <div style="margin-top:10px;">
+      <button id="reloadCarsBtn">車一覧を再読み込み</button>
+    </div>
+  </div>
+
+  <!-- 予約一覧 -->
+  <div class="card">
+    <h3 style="margin:0 0 6px 0;">予約一覧</h3>
+
     <div class="row">
       <div>
         <label>車</label>
@@ -59,11 +79,11 @@
   // ✅ あなたの値
   const LIFF_ID = "2008829976-rJa7ANlR";
   const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
-  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6Ikpwb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
 
-  // ★ここに「あなたの管理者userId」を入れる（Supabase reservations.user_idで取った値）
+  // ★ここに「あなたの管理者userId」を入れる
   const ADMIN_USER_IDS = [
-    "Ue8aba629033a4c537f7d1f83bda08051"
+    "YOUR_ADMIN_USER_ID_HERE"
   ];
 
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -71,20 +91,20 @@
 
   let me = { userId:null, displayName:null };
   let rowsCache = [];
+  let carsCache = [];
 
   function toISO(dtLocal){
     if(!dtLocal) return null;
     return new Date(dtLocal).toISOString();
   }
 
-  async function loadCars(){
-    const { data, error } = await sb.from("cars").select("*").order("id");
-    if(error) throw error;
-    $("car").innerHTML = `<option value="">（全車）</option>` + data.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+  function setCarMsg(text, ok=true){
+    const el = $("carMsg");
+    el.textContent = text;
+    el.className = "small " + (ok ? "ok" : "ng");
   }
 
   async function loadUserFullName(){
-    // users テーブル（苗字・名前）から取得
     const { data, error } = await sb
       .from("users")
       .select("last_name, first_name")
@@ -93,16 +113,87 @@
 
     if(error){
       console.error(error);
-      $("displayName").textContent = me.displayName; // フォールバック
+      $("displayName").textContent = me.displayName;
       return;
     }
 
     if(data && data.last_name && data.first_name){
       $("displayName").textContent = `${data.last_name} ${data.first_name}`;
     } else {
-      $("displayName").textContent = me.displayName; // 未登録ならLINE名
+      $("displayName").textContent = me.displayName;
     }
   }
+
+  async function loadCars(){
+    const { data, error } = await sb.from("cars").select("*").order("id");
+    if(error) throw error;
+    carsCache = data;
+
+    // 検索用プルダウン
+    $("car").innerHTML =
+      `<option value="">（全車）</option>` +
+      data.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+
+    // 車名編集UI
+    renderCarsEditor();
+  }
+
+  function renderCarsEditor(){
+    const wrap = $("carsEditor");
+    if(!carsCache || carsCache.length === 0){
+      wrap.innerHTML = "<div class='small'>車データがありません</div>";
+      return;
+    }
+
+    wrap.innerHTML = `
+      <div class="muted"><b>ID</b></div>
+      <div class="muted"><b>車名</b></div>
+      <div></div>
+      ${carsCache.map(c => `
+        <div>${c.id}</div>
+        <div><input id="carName_${c.id}" type="text" value="${escapeHtml(c.name)}" /></div>
+        <div><button onclick="saveCarName(${c.id})">保存</button></div>
+      `).join("")}
+    `;
+    setCarMsg("");
+  }
+
+  function escapeHtml(str){
+    return (str ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
+  }
+
+  async function saveCarName(id){
+    try{
+      const input = document.getElementById(`carName_${id}`);
+      const newName = (input?.value ?? "").trim();
+      if(!newName){
+        setCarMsg("車名は空にできません。", false);
+        return;
+      }
+
+      const { error } = await sb.from("cars").update({ name: newName }).eq("id", id);
+      if(error){
+        console.error(error);
+        setCarMsg("保存に失敗しました（RLS/権限を確認）", false);
+        return;
+      }
+
+      // ローカル反映
+      carsCache = carsCache.map(c => c.id === id ? ({...c, name:newName}) : c);
+
+      // プルダウンにも反映
+      const opt = $("car").querySelector(`option[value="${id}"]`);
+      if(opt) opt.textContent = newName;
+
+      setCarMsg(`保存しました：ID ${id} → ${newName}`, true);
+    }catch(e){
+      console.error(e);
+      setCarMsg("保存時にエラーが発生しました", false);
+    }
+  }
+
+  // onclick から呼べるように
+  window.saveCarName = saveCarName;
 
   async function search(){
     const carId = $("car").value ? Number($("car").value) : null;
@@ -226,6 +317,7 @@
 
   $("loadBtn").addEventListener("click", search);
   $("csvBtn").addEventListener("click", exportCSV);
+  $("reloadCarsBtn").addEventListener("click", loadCars);
 
   init().catch(e=>{
     console.error(e);
