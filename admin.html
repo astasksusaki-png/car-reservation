@@ -21,13 +21,9 @@
     table{width:100%; border-collapse:collapse; margin-top:8px;}
     th, td{border-bottom:1px solid #eee; padding:8px; font-size:14px; text-align:left; vertical-align:top;}
     th{background:#fafafa; position:sticky; top:0;}
-
-    .danger{color:#b00020; font-weight:700;}
   </style>
 
-  <!-- LIFF -->
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <!-- Supabase -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 
@@ -40,32 +36,31 @@
     <span id="meName" class="pill">未ログイン</span>
   </div>
 
-  <!-- ✅ ①車名編集（上に配置） -->
-  <div class="card" style="margin-top:12px;">
-    <h3 style="margin-top:0;">車名の編集</h3>
-    <div class="small">※変更したい車名を入力して「保存」してください（即反映）</div>
-    <div id="carsBox" style="margin-top:10px;">読み込み中…</div>
-  </div>
-
-  <!-- ✅ ②予約一覧（下に配置／新しい順） -->
+  <!-- ✅ ①予約一覧（上） -->
   <div class="card" style="margin-top:12px;">
     <div class="row" style="justify-content:space-between;">
       <h3 style="margin:0;">予約一覧（新しい順）</h3>
       <button id="reloadBtn">再読み込み</button>
     </div>
+
     <div class="row" style="margin-top:6px;">
       <span class="small">表示：</span>
       <select id="carFilter">
         <option value="all">全車</option>
       </select>
-      <span class="small">※全件表示</span>
     </div>
 
     <div id="reservationsBox" style="margin-top:10px;">読み込み中…</div>
   </div>
 
+  <!-- ✅ ②車名編集（下） -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin-top:0;">車名の編集</h3>
+    <div class="small">※車名を変更して「保存」を押すと即反映されます</div>
+    <div id="carsBox" style="margin-top:10px;">読み込み中…</div>
+  </div>
+
 <script>
-  // ✅ あなたの値（index と同じでOK）
   const LIFF_ID = "2008829976-rJa7ANlR";
   const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
@@ -74,52 +69,32 @@
   const $ = (id)=>document.getElementById(id);
 
   const me = { userId:null, displayName:null };
-  let carsMap = {}; // {id: name}
-
-  function setStatus(t){ $("status").textContent = t; }
+  let carsMap = {};
 
   const pad = (n)=>String(n).padStart(2,"0");
-  function fmtYmd(d){
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-  }
-  function fmtHm(d){
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  }
+  const fmtYmd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const fmtHm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
   async function initLiff(){
     await liff.init({ liffId: LIFF_ID });
-    if(!liff.isLoggedIn()){
-      setStatus("未ログイン：ログインします…");
-      liff.login();
-      return false;
-    }
-    const profile = await liff.getProfile();
-    me.userId = profile.userId;
-    me.displayName = profile.displayName;
+    if(!liff.isLoggedIn()){ liff.login(); return false; }
+    const p = await liff.getProfile();
+    me.userId = p.userId;
+    me.displayName = p.displayName;
     $("meName").textContent = me.displayName;
     return true;
   }
 
-  // ✅ 管理者チェック（あなたの環境のテーブル名に合わせてください）
-  // 例：admins テーブル： user_id (text) が入っている想定
   async function requireAdmin(){
-    const { data, error } = await sb
+    const { data } = await sb
       .from("admins")
       .select("user_id")
       .eq("user_id", me.userId)
       .maybeSingle();
 
-    if(error){
-      console.error(error);
-      setStatus("初期化エラー：管理者テーブル確認に失敗");
-      $("reservationsBox").innerHTML = `<div class="danger">管理者チェックに失敗しました。admins テーブル名/権限を確認してください。</div>`;
-      throw error;
-    }
-
     if(!data){
-      setStatus("アクセス拒否（管理者のみ）");
       document.body.innerHTML = `
-        <h2 class="danger">アクセス拒否（管理者のみ）</h2>
+        <h2 style="color:#b00020;">アクセス拒否（管理者のみ）</h2>
         <div class="small">このアカウントは管理者ではありません。</div>
       `;
       throw new Error("not admin");
@@ -127,147 +102,82 @@
   }
 
   async function loadCars(){
-    const { data, error } = await sb.from("cars").select("*").order("id");
-    if(error) throw error;
+    const { data } = await sb.from("cars").select("*").order("id");
 
     carsMap = {};
-    data.forEach(c => carsMap[c.id] = c.name);
+    data.forEach(c=>carsMap[c.id]=c.name);
 
-    // 車フィルタ
-    const current = $("carFilter").value;
-    const opts = [`<option value="all">全車</option>`]
-      .concat(data.map(c=>`<option value="${c.id}">${c.name}</option>`));
-    $("carFilter").innerHTML = opts.join("");
-    if(current) $("carFilter").value = current;
+    $("carFilter").innerHTML =
+      `<option value="all">全車</option>` +
+      data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
 
-    // 車名編集UI
-    $("carsBox").innerHTML = `
-      <div style="display:flex; flex-direction:column; gap:10px;">
-        ${data.map(c=>{
-          return `
-            <div class="row">
-              <span class="pill">ID:${c.id}</span>
-              <input id="carName_${c.id}" type="text" value="${(c.name||"").replaceAll('"','&quot;')}" style="flex:1; min-width:220px;">
-              <button data-save-car="${c.id}">保存</button>
-            </div>
-          `;
-        }).join("")}
+    $("carsBox").innerHTML = data.map(c=>`
+      <div class="row">
+        <span class="pill">ID:${c.id}</span>
+        <input id="carName_${c.id}" value="${c.name}" style="flex:1; min-width:200px;">
+        <button data-save="${c.id}">保存</button>
       </div>
-    `;
+    `).join("");
 
-    // 保存イベント
-    document.querySelectorAll("button[data-save-car]").forEach(btn=>{
-      btn.addEventListener("click", async ()=>{
-        const id = Number(btn.getAttribute("data-save-car"));
-        const input = document.getElementById(`carName_${id}`);
-        const name = (input?.value || "").trim();
-        if(!name){
-          alert("車名を入力してください。");
-          return;
-        }
-        btn.disabled = true;
-        try{
-          const { error } = await sb.from("cars").update({ name }).eq("id", id);
-          if(error) throw error;
-          await loadCars();         // carsMap更新＋UI更新
-          await loadReservations(); // 一覧も車名反映
-          alert("保存しました。");
-        }catch(e){
-          console.error(e);
-          alert("保存に失敗しました。");
-        }finally{
-          btn.disabled = false;
-        }
-      });
+    document.querySelectorAll("button[data-save]").forEach(btn=>{
+      btn.onclick = async ()=>{
+        const id = btn.dataset.save;
+        const name = $("carName_"+id).value.trim();
+        if(!name) return alert("車名を入力してください");
+        await sb.from("cars").update({name}).eq("id", id);
+        await loadCars();
+        await loadReservations();
+        alert("保存しました");
+      };
     });
   }
 
-  // ✅ 予約一覧：新しい順（start_time DESC）
   async function loadReservations(){
     const filter = $("carFilter").value;
+    let q = sb.from("reservations")
+      .select("car_id,user_name,start_time,end_time,note")
+      .order("start_time",{ascending:false});
+    if(filter!=="all") q = q.eq("car_id", Number(filter));
 
-    let q = sb
-      .from("reservations")
-      .select("id, car_id, user_name, start_time, end_time, note")
-      .order("start_time", { ascending: false }); // ★ここが「新しい順」
+    const { data } = await q;
 
-    if(filter !== "all"){
-      q = q.eq("car_id", Number(filter));
-    }
-
-    const { data, error } = await q;
-    if(error) throw error;
-
-    if(!data || data.length === 0){
-      $("reservationsBox").innerHTML = `<div class="small">予約がありません。</div>`;
+    if(!data.length){
+      $("reservationsBox").innerHTML = `<div class="small">予約はありません</div>`;
       return;
     }
 
     $("reservationsBox").innerHTML = `
-      <div style="overflow:auto; max-height:55vh;">
-        <table>
-          <thead>
-            <tr>
-              <th>車</th>
-              <th>日付</th>
-              <th>時間</th>
-              <th>利用者</th>
-              <th>用途メモ</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${data.map(r=>{
-              const carName = carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`;
-              const s = new Date(r.start_time);
-              const e = new Date(r.end_time);
-              const ymd = fmtYmd(s);
-              const time = `${fmtHm(s)}〜${fmtHm(e)}`;
-              const user = r.user_name || "";
-              const note = (r.note || "");
-              return `
-                <tr>
-                  <td>${carName}</td>
-                  <td>${ymd}</td>
-                  <td>${time}</td>
-                  <td>${user}</td>
-                  <td>${note}</td>
-                </tr>
-              `;
-            }).join("")}
-          </tbody>
-        </table>
-      </div>
+      <table>
+        <thead>
+          <tr><th>車</th><th>日付</th><th>時間</th><th>利用者</th><th>用途</th></tr>
+        </thead>
+        <tbody>
+          ${data.map(r=>{
+            const s=new Date(r.start_time), e=new Date(r.end_time);
+            return `
+              <tr>
+                <td>${carsMap[r.car_id]}</td>
+                <td>${fmtYmd(s)}</td>
+                <td>${fmtHm(s)}〜${fmtHm(e)}</td>
+                <td>${r.user_name||""}</td>
+                <td>${r.note||""}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
     `;
   }
 
-  // UI
-  $("reloadBtn").addEventListener("click", async ()=>{
-    try{
-      await loadCars();
-      await loadReservations();
-    }catch(e){
-      console.error(e);
-      alert("再読み込みに失敗しました。");
-    }
-  });
-  $("carFilter").addEventListener("change", loadReservations);
+  $("reloadBtn").onclick = ()=>{ loadCars(); loadReservations(); };
+  $("carFilter").onchange = loadReservations;
 
-  // 起動
-  (async ()=>{
-    try{
-      const ok = await initLiff();
-      if(!ok) return;
-
-      await requireAdmin();
-
-      setStatus("読み込み中…");
-      await loadCars();
-      await loadReservations();
-      setStatus("表示中");
-    }catch(e){
-      // not admin などはここに来る
-      console.error(e);
-    }
+  (async()=>{
+    await initLiff();
+    await requireAdmin();
+    await loadCars();
+    await loadReservations();
+    $("status").textContent = "表示中";
   })();
 </script>
 </body>
