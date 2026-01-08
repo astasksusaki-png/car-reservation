@@ -24,14 +24,8 @@
     .muted{color:#666;}
     .danger{color:#b00020; font-weight:700;}
 
-    /* クリックできる利用者名 */
-    .userLink{
-      color:#0b57d0;
-      text-decoration:underline;
-      cursor:pointer;
-    }
+    .userLink{ color:#0b57d0; text-decoration:underline; cursor:pointer; }
 
-    /* モーダル */
     .overlay{
       position:fixed; inset:0; background:rgba(0,0,0,.45);
       display:none; align-items:center; justify-content:center; padding:16px; z-index:9999;
@@ -71,7 +65,7 @@
     <span id="meName" class="pill">未ログイン</span>
   </div>
 
-  <!-- ✅ 予約一覧（上）＋ 期間指定CSV -->
+  <!-- ✅ 予約一覧（上）＋ 期間指定CSV ＋ 利用者検索 -->
   <div class="card" style="margin-top:12px;">
     <div class="row" style="justify-content:space-between;">
       <h3 style="margin:0;">予約一覧（今後の予約が基本）</h3>
@@ -91,6 +85,11 @@
         <option value="future" selected>今後のみ（今日以降）</option>
         <option value="range">期間指定</option>
       </select>
+
+      <!-- ✅ 追加：利用者検索 -->
+      <span class="small">利用者：</span>
+      <input id="userSearch" type="text" placeholder="例：山田 / 太郎 / 田" style="min-width:180px;">
+      <button id="clearUserSearchBtn" type="button">クリア</button>
     </div>
 
     <div id="rangeBox" class="row" style="margin-top:8px; display:none;">
@@ -147,8 +146,6 @@
 
   const me = { userId:null, displayName:null };
   let carsMap = {};
-
-  // 編集対象の user_id を保持
   let editingUserId = null;
 
   const pad = (n)=>String(n).padStart(2,"0");
@@ -221,14 +218,12 @@
     carsMap = {};
     data.forEach(c=>carsMap[c.id]=c.name);
 
-    // フィルタ
     const current = $("carFilter").value;
     $("carFilter").innerHTML =
       `<option value="all">全車</option>` +
       data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
     if(current) $("carFilter").value = current;
 
-    // 車名編集UI
     $("carsBox").innerHTML = data.map(c=>`
       <div class="row">
         <span class="pill">ID:${c.id}</span>
@@ -263,17 +258,18 @@
   function getFilterParams(){
     const car = $("carFilter").value;
     const mode = $("modeFilter").value;
+    const userQuery = ($("userSearch").value || "").trim(); // ✅ 追加
 
     if(mode === "future"){
-      return { car, mode, startISO: todayStartLocal().toISOString(), endISO: null };
+      return { car, mode, userQuery, startISO: todayStartLocal().toISOString(), endISO: null };
     }
 
     const s = $("rangeStart").value;
     const e = $("rangeEnd").value;
-    if(!s || !e) return { car, mode, invalid:true };
+    if(!s || !e) return { car, mode, userQuery, invalid:true };
 
     return {
-      car, mode,
+      car, mode, userQuery,
       startISO: ymdToLocalStartISO(s),
       endISO: ymdToLocalEndExclusiveISO(e),
       invalid:false
@@ -283,7 +279,6 @@
   async function fetchReservationsForTable(){
     const p = getFilterParams();
 
-    // ★重要：user_id を取得（クリック編集に必要）
     let q = sb.from("reservations")
       .select("id, car_id, user_id, user_name, start_time, end_time, note")
       .order("start_time", { ascending: false });
@@ -299,7 +294,16 @@
     }
 
     const { data, error } = await q;
-    return { data: data || [], error, invalid:false };
+    if(error) return { data:[], error, invalid:false };
+
+    // ✅ 利用者検索：部分一致（クライアント側で絞る：簡単で確実）
+    let rows = data || [];
+    if(p.userQuery){
+      const key = p.userQuery.toLowerCase();
+      rows = rows.filter(r => String(r.user_name||"").toLowerCase().includes(key));
+    }
+
+    return { data: rows, error:null, invalid:false };
   }
 
   async function loadReservations(){
@@ -335,9 +339,7 @@
                 <td>${carName}</td>
                 <td>${fmtYmd(s)}</td>
                 <td>${fmtHm(s)}〜${fmtHm(e)}</td>
-                <td>
-                  <span class="userLink" data-uid="${uid}" data-uname="${uname.replaceAll('"','&quot;')}">${uname}</span>
-                </td>
+                <td><span class="userLink" data-uid="${uid}">${uname}</span></td>
                 <td>${r.note||""}</td>
               </tr>
             `;
@@ -346,7 +348,6 @@
       </table>
     `;
 
-    // ✅ 利用者名クリック → usersから現在名を引いてモーダル表示
     document.querySelectorAll(".userLink").forEach(el=>{
       el.addEventListener("click", async ()=>{
         const uid = el.getAttribute("data-uid");
@@ -355,7 +356,6 @@
           return;
         }
 
-        // users に登録があればそれを優先表示
         const { data, error } = await sb
           .from("users")
           .select("last_name, first_name")
@@ -364,19 +364,16 @@
 
         if(error){
           console.error(error);
-          // usersに無くても編集させる
           showNameModal(uid, "", "");
           return;
         }
 
-        const last = data?.last_name || "";
-        const first = data?.first_name || "";
-        showNameModal(uid, last, first);
+        showNameModal(uid, data?.last_name||"", data?.first_name||"");
       });
     });
   }
 
-  // ===== CSV（期間指定時のみ）=====
+  // CSV（期間指定時のみ + 利用者検索も反映）
   function csvEscape(v){
     const s = String(v ?? "");
     if(/[",\n\r]/.test(s)) return `"${s.replaceAll('"','""')}"`;
@@ -418,7 +415,13 @@
       return;
     }
 
-    const rows = data || [];
+    // 利用者検索も反映（部分一致）
+    let rows = data || [];
+    if(p.userQuery){
+      const key = p.userQuery.toLowerCase();
+      rows = rows.filter(r => String(r.user_name||"").toLowerCase().includes(key));
+    }
+
     const header = ["車","日付","開始","終了","利用者","用途メモ"];
     const lines = [header.map(csvEscape).join(",")];
 
@@ -441,30 +444,28 @@
     const sYmd = $("rangeStart").value;
     const eYmd = $("rangeEnd").value;
     const carPart = (p.car === "all") ? "全車" : (carsMap?.[Number(p.car)] ?? `車${p.car}`);
-    const filename = `社用車予約_${carPart}_${sYmd}〜${eYmd}.csv`;
+    const namePart = p.userQuery ? `_${p.userQuery}` : "";
+    const filename = `社用車予約_${carPart}${namePart}_${sYmd}〜${eYmd}.csv`;
 
     downloadTextFile(filename, csv);
   }
 
-  // ===== 名前保存：users + reservations.user_name を一括更新 =====
+  // 名前保存：users + reservations.user_name を一括更新
   $("cancelNameBtn").addEventListener("click", hideNameModal);
-
   $("saveNameBtn").addEventListener("click", async ()=>{
     if(!editingUserId) return;
 
     const last = ($("editLastName").value || "").trim();
     const first = ($("editFirstName").value || "").trim();
-
     if(!last || !first){
       alert("苗字・名前を入力してください。");
       return;
     }
 
     const newFull = `${last} ${first}`;
-
     $("saveNameBtn").disabled = true;
+
     try{
-      // 1) users 更新
       const { error: e1 } = await sb.from("users").upsert({
         user_id: editingUserId,
         last_name: last,
@@ -472,14 +473,13 @@
       });
       if(e1) throw e1;
 
-      // 2) reservations の表示名も一括更新
       const { error: e2 } = await sb
         .from("reservations")
         .update({ user_name: newFull })
         .eq("user_id", editingUserId);
       if(e2) throw e2;
 
-      alert("保存しました。予約表示名も更新されます（画面再読み込みで反映）。");
+      alert("保存しました。予約表示名も更新されます。");
       hideNameModal();
       await loadReservations();
     }catch(e){
@@ -494,10 +494,24 @@
   function syncRangeBox(){
     $("rangeBox").style.display = ($("modeFilter").value === "range") ? "flex" : "none";
   }
+
   $("reloadBtn").onclick = async ()=>{ await loadCars(); await loadReservations(); };
+
   $("carFilter").onchange = loadReservations;
   $("modeFilter").onchange = async ()=>{ syncRangeBox(); await loadReservations(); };
   $("applyRangeBtn").onclick = loadReservations;
+
+  // ✅ 利用者検索：入力したら即反映（軽い想定なのでOK）
+  let searchTimer = null;
+  $("userSearch").addEventListener("input", ()=>{
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(loadReservations, 200);
+  });
+  $("clearUserSearchBtn").addEventListener("click", ()=>{
+    $("userSearch").value = "";
+    loadReservations();
+  });
+
   $("downloadCsvBtn").onclick = downloadCsv;
 
   // 起動
@@ -506,7 +520,6 @@
       await initLiff();
       await requireAdmin();
 
-      // デフォルト期間：今日〜30日後
       const t = todayStartLocal();
       const t2 = new Date(t.getFullYear(), t.getMonth(), t.getDate()+30, 0,0,0,0);
       $("rangeStart").value = fmtYmd(t);
