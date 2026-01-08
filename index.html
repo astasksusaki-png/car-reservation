@@ -28,6 +28,24 @@
     .fc .busy-other .fc-event-time{ display:none !important; }
     .fc .mine-event{ font-weight: 600; }
 
+    /* ===== 点検中の車を選択している時：カレンダーを薄く ===== */
+    .calendar-dim{
+      opacity: 0.35;
+      pointer-events: none; /* クリック無効 */
+      filter: grayscale(0.2);
+    }
+    .dimBanner{
+      display:none;
+      margin:8px 0 0;
+      padding:8px 10px;
+      border-radius:10px;
+      background:#fff3f3;
+      border:1px solid #ffd2d2;
+      color:#b00020;
+      font-size:13px;
+      font-weight:700;
+    }
+
     /* モーダル共通 */
     .overlay{
       position:fixed; inset:0; background:rgba(0,0,0,.45);
@@ -97,6 +115,8 @@
       <select id="car"></select>
       <button id="reloadBtn">予約再読み込み</button>
     </div>
+
+    <div id="dimBanner" class="dimBanner">選択中の車は「点検中」です（予約はできません）</div>
   </div>
 
   <div class="hint">
@@ -200,7 +220,7 @@
   // ✅ あなたの値
   const LIFF_ID = "2008829976-rJa7ANlR";
   const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
-  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
 
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const $ = (id)=>document.getElementById(id);
@@ -228,11 +248,9 @@
   function toYmd(d){
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   }
-
   function fmtHm(d){
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
-
   function todayStartLocal(){
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0,0);
@@ -327,48 +345,59 @@
     carsAll.forEach(c => { carsMap[c.id] = c.name; });
   }
 
+  function getSelectedCar(){
+    const carId = Number($("car").value);
+    return (carsAll || []).find(c => Number(c.id) === carId) || null;
+  }
+
+  function updateDimUi(){
+    const car = getSelectedCar();
+    const isActive = !(car && car.is_active === false);
+
+    // バナー
+    $("dimBanner").style.display = isActive ? "none" : "block";
+
+    // カレンダーを薄くしてクリック無効（点検中のとき）
+    const calEl = $("calendar");
+    if(isActive){
+      calEl.classList.remove("calendar-dim");
+    }else{
+      calEl.classList.add("calendar-dim");
+    }
+
+    // 予約モーダルの「予約する」を無効
+    const saveBtn = $("saveModalBtn");
+    if(saveBtn) saveBtn.disabled = !isActive;
+
+    // ステータスに一言
+    if(!isActive){
+      setStatus(`ログイン中：${me.displayName}（点検中の車を選択）`);
+    }else{
+      setStatus(`ログイン中：${me.displayName}`);
+    }
+  }
+
   async function loadCarsDropdown(){
-  const sel = $("car");
-  const current = sel.value;
+    const sel = $("car");
+    const current = sel.value;
 
-  // ✅ 点検中も含めて表示（ラベルを付ける）
-  sel.innerHTML = (carsAll || []).map(c=>{
-    const stop = (c.is_active === false) ? "（点検中）" : "";
-    return `<option value="${c.id}" data-active="${c.is_active !== false ? "1" : "0"}">${c.name}${stop}</option>`;
-  }).join("");
+    if((carsAll || []).length === 0){
+      sel.innerHTML = `<option value="">車が登録されていません</option>`;
+      return;
+    }
 
-  // 選択維持
-  if(current && (carsAll || []).some(c=>String(c.id)===String(current))){
-    sel.value = current;
+    // ✅ 点検中も表示（ラベル付）
+    sel.innerHTML = (carsAll || []).map(c=>{
+      const stop = (c.is_active === false) ? "（点検中）" : "";
+      return `<option value="${c.id}">${c.name}${stop}</option>`;
+    }).join("");
+
+    if(current && (carsAll || []).some(c=>String(c.id)===String(current))){
+      sel.value = current;
+    }
+
+    updateDimUi();
   }
-
-  // 1台も無い場合
-  if(!sel.value && (carsAll||[]).length === 0){
-    sel.innerHTML = `<option value="">車が登録されていません</option>`;
-  }
-
-  // ✅ 点検中ならボタンや説明をわかりやすくする（任意）
-  updateCarActiveUi();
-}
-  }
-function updateCarActiveUi(){
-  const sel = $("car");
-  const carId = Number(sel.value);
-  const car = (carsAll || []).find(c => Number(c.id) === carId);
-
-  const isActive = !car || car.is_active !== false;
-
-  // 「予約する」ボタンを押せないように（モーダル内）
-  const saveBtn = $("saveModalBtn");
-  if(saveBtn) saveBtn.disabled = !isActive;
-
-  // 画面上のステータスに一言（任意）
-  if(!isActive){
-    setStatus(`ログイン中：${me.displayName}（選択中の車は点検中）`);
-  }else{
-    setStatus(`ログイン中：${me.displayName}`);
-  }
-}
 
   function subscribeCarsRealtime(){
     if(carsChannel){
@@ -378,10 +407,7 @@ function updateCarActiveUi(){
 
     carsChannel = sb.channel("cars-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "cars" }, async () => {
-        await fetchCarsAll();
-        await loadCarsDropdown();
-        await loadMyReservationsAll();
-        await loadEvents();
+        await safeReloadAll("車情報が更新されました");
       })
       .subscribe();
   }
@@ -396,8 +422,8 @@ function updateCarActiveUi(){
 
     if (error) {
       console.error(error);
-      await showDialog("設定エラー", "usersテーブルが見つからない可能性があります。Supabaseで users テーブルを作成してください。");
-      return;
+      await showDialog("設定エラー", "usersテーブルの読み取りに失敗しました。\nRLSがONの場合は users の SELECT ポリシーが必要です。");
+      throw error;
     }
 
     if (data && data.last_name && data.first_name) {
@@ -465,9 +491,8 @@ function updateCarActiveUi(){
 
   // ===== 予約作成 =====
   async function createReservation(carId, startISO, endISO, note){
-    // ✅ 点検中チェック（安全策）
-    const { data: car, error: carErr } = await sb.from("cars").select("is_active").eq("id", carId).maybeSingle();
-    if(carErr) throw carErr;
+    // ✅ 点検中なら保存不可
+    const car = getSelectedCar();
     if(car && car.is_active === false){
       await showDialog("予約できません", "この車は現在「点検中」で使用停止になっています。");
       return false;
@@ -490,76 +515,6 @@ function updateCarActiveUi(){
 
     if(error) throw error;
     return true;
-  }
-
-  // ===== 予約変更（一覧から）=====
-  function openEditModal(res){
-    editing.id = res.id;
-    editing.carId = res.car_id;
-    editing.ymd = res.ymd;
-
-    $("editStartSel").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
-    $("editEndSel").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
-
-    $("editStartSel").value = res.startHHMM;
-    $("editEndSel").value = res.endHHMM;
-
-    $("editNote").value = res.note || "";
-
-    const carName = carsMap?.[Number(res.car_id)] ?? `車ID:${res.car_id}`;
-    $("editInfo").textContent = `車：${carName} / 日付：${res.ymd}`;
-
-    $("editOverlay").style.display = "flex";
-  }
-
-  async function saveEdit(){
-    if(!editing.id) return;
-
-    const startStr = $("editStartSel").value;
-    const endStr = $("editEndSel").value;
-
-    const startISO = toISOFromYmdTime(editing.ymd, startStr);
-    const endISO = toISOFromYmdTime(editing.ymd, endStr);
-
-    if(new Date(startISO) >= new Date(endISO)){
-      await showDialog("入力エラー", "終了は開始より後にしてください。");
-      return;
-    }
-
-    // 点検中チェック（変更時も）
-    const { data: car, error: carErr } = await sb.from("cars").select("is_active").eq("id", editing.carId).maybeSingle();
-    if(carErr) throw carErr;
-    if(car && car.is_active === false){
-      await showDialog("変更できません", "この車は現在「点検中」で使用停止になっています。");
-      return;
-    }
-
-    const overlap = await hasOverlap(editing.carId, startISO, endISO, editing.id);
-    if(overlap){
-      await showDialog("変更できません", "その時間帯はすでに予約があります。\n時間を変更してください。");
-      return;
-    }
-
-    const note = ($("editNote").value || "").trim();
-
-    const { error } = await sb
-      .from("reservations")
-      .update({ start_time: startISO, end_time: endISO, note })
-      .eq("id", editing.id)
-      .eq("user_id", me.userId);
-
-    if(error){
-      console.error(error);
-      await showDialog("変更できません", "変更に失敗しました（自分の予約のみ変更可）");
-      return;
-    }
-
-    $("editOverlay").style.display = "none";
-    editing = { id:null, carId:null, ymd:null };
-
-    await loadEvents();
-    await loadMyReservationsAll();
-    await showDialog("変更しました", "予約時間を変更しました。");
   }
 
   // ===== キャンセル =====
@@ -611,8 +566,8 @@ function updateCarActiveUi(){
 
     if(error){
       console.error(error);
-      await showDialog("取得エラー", "予約データの取得に失敗しました");
-      return;
+      await showDialog("取得エラー", "reservations の取得に失敗しました。\nRLSがONの場合は reservations の SELECT ポリシーが必要です。");
+      throw error;
     }
 
     calendar.removeAllEvents();
@@ -666,21 +621,24 @@ function updateCarActiveUi(){
       eventTimeFormat:{hour:"2-digit", minute:"2-digit", hour12:false},
 
       selectable:false,
-      datesSet: loadEvents,
+
+      datesSet: async ()=>{
+        await loadEvents();
+      },
 
       dateClick:(info)=>{
-          // ✅ 点検中チェック（モーダルを開かない）
-  const carId = Number($("car").value);
-  const car = (carsAll || []).find(c => Number(c.id) === carId);
-  if(car && car.is_active === false){
-    showDialog("予約できません", "この車は現在「点検中」で使用停止になっています。");
-    return;
-  }
+        // ✅ 点検中ならモーダルを開かない（ただし閲覧はできる）
+        const car = getSelectedCar();
+        if(car && car.is_active === false){
+          showDialog("予約できません", "この車は現在「点検中」で使用停止になっています。");
+          return;
+        }
 
         if(info.allDay){
           openReservationModalAllDay(info.date);
           return;
         }
+
         const picked = floorTo15FromDateStr(info.dateStr);
         if(!picked){
           const d = new Date(info.date);
@@ -704,8 +662,7 @@ function updateCarActiveUi(){
           const carName = $("car").options[$("car").selectedIndex]?.textContent || "";
           const ok = await cancelReservation(info.event.id, carName, dateText, start, end);
           if(ok){
-            await loadEvents();
-            await loadMyReservationsAll();
+            await safeReloadAll();
           }
           return;
         }
@@ -721,9 +678,7 @@ function updateCarActiveUi(){
   // ===== 自分の予約一覧（全車／今日以降すべて）=====
   function groupByDate(rows){
     const map = {};
-    rows.forEach(r=>{
-      (map[r.ymd] ||= []).push(r);
-    });
+    rows.forEach(r=>{ (map[r.ymd] ||= []).push(r); });
     return map;
   }
 
@@ -739,7 +694,7 @@ function updateCarActiveUi(){
 
     if(error){
       console.error(error);
-      $("myList").textContent = "予約一覧の取得に失敗しました";
+      $("myList").innerHTML = `<div class="small">予約一覧の取得に失敗しました（reservations SELECT 権限/RLSを確認）</div>`;
       return;
     }
 
@@ -762,7 +717,7 @@ function updateCarActiveUi(){
     }
 
     const grouped = groupByDate(rows);
-    const dates = Object.keys(grouped).sort(); // 昇順
+    const dates = Object.keys(grouped).sort();
 
     let html = "";
     dates.forEach(d=>{
@@ -779,7 +734,6 @@ function updateCarActiveUi(){
               ${sub ? `<div class="mySub">${sub}</div>` : `<div class="mySub"></div>`}
             </div>
             <div class="myActions">
-              <button class="btnGhost" data-edit="${r.id}">変更</button>
               <button class="btnDanger" data-cancel="${r.id}">キャンセル</button>
             </div>
           </div>
@@ -789,7 +743,6 @@ function updateCarActiveUi(){
 
     $("myList").innerHTML = html;
 
-    // ボタンイベント
     document.querySelectorAll("[data-cancel]").forEach(btn=>{
       btn.addEventListener("click", async ()=>{
         const id = btn.getAttribute("data-cancel");
@@ -799,44 +752,44 @@ function updateCarActiveUi(){
         const carName = carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`;
         const ok = await cancelReservation(r.id, carName, r.ymd, r.startHHMM, r.endHHMM);
         if(ok){
-          await loadEvents();
-          await loadMyReservationsAll();
+          await safeReloadAll();
         }
-      });
-    });
-
-    document.querySelectorAll("[data-edit]").forEach(btn=>{
-      btn.addEventListener("click", ()=>{
-        const id = btn.getAttribute("data-edit");
-        const r = rows.find(x=>String(x.id)===String(id));
-        if(!r) return;
-        openEditModal(r);
       });
     });
   }
 
+  // ===== 安全に全再読込（止まり対策）=====
+  async function safeReloadAll(msg){
+    try{
+      if(msg) setStatus(msg);
+
+      await fetchCarsAll();
+      await loadCarsDropdown();
+      updateDimUi();
+
+      if(calendar) await loadEvents();
+      await loadMyReservationsAll();
+
+      setStatus(`ログイン中：${me.displayName}`);
+    }catch(e){
+      console.error(e);
+      setStatus("読み込みエラー：RLS（SELECT権限）を確認してください");
+      await showDialog("読み込みエラー", "データの取得に失敗しました。\nSupabaseで cars / users / reservations の SELECT ポリシー（RLS）を確認してください。");
+    }
+  }
+
   // ===== UIイベント =====
-  $("reloadBtn").addEventListener("click", async ()=>{
-    await fetchCarsAll();
-    await loadCarsDropdown();
-    await loadEvents();
-    await loadMyReservationsAll();
+  $("reloadBtn").addEventListener("click", ()=>safeReloadAll("再読み込み中…"));
+
+  $("car").addEventListener("change", async ()=>{
+    updateDimUi();
+    try{
+      await loadEvents();
+    }catch(_){}
   });
-
-  $("car").addEventListener("change", ()=>{ updateCarActiveUi(); loadEvents(); });
-
 
   $("cancelModalBtn").addEventListener("click", ()=>{ $("overlay").style.display="none"; });
   $("cancelEditBtn").addEventListener("click", ()=>{ $("editOverlay").style.display="none"; });
-
-  $("saveEditBtn").addEventListener("click", async ()=>{
-    try{
-      await saveEdit();
-    }catch(e){
-      console.error(e);
-      await showDialog("変更に失敗", "変更に失敗しました（設定やDBを確認）");
-    }
-  });
 
   $("saveModalBtn").addEventListener("click", async ()=>{
     try{
@@ -848,7 +801,13 @@ function updateCarActiveUi(){
 
       const carIdStr = $("car").value;
       if(!carIdStr){
-        await showDialog("車を選択", "利用可能な車がありません。");
+        await showDialog("車を選択", "車が選択されていません。");
+        return;
+      }
+
+      const car = getSelectedCar();
+      if(car && car.is_active === false){
+        await showDialog("予約できません", "この車は現在「点検中」で使用停止になっています。");
         return;
       }
 
@@ -867,12 +826,11 @@ function updateCarActiveUi(){
       const ok = await createReservation(carId, startISO, endISO, $("note").value);
       if(ok){
         $("overlay").style.display="none";
-        await loadEvents();
-        await loadMyReservationsAll();
+        await safeReloadAll();
       }
     }catch(e){
       console.error(e);
-      await showDialog("予約に失敗", "予約に失敗しました（設定値やDBを確認）");
+      await showDialog("予約に失敗", "予約に失敗しました（RLS/設定値/DBを確認）");
     }
   });
 
@@ -893,7 +851,7 @@ function updateCarActiveUi(){
 
     if(error){
       console.error(error);
-      await showDialog("保存に失敗", "保存に失敗しました。Supabaseの users テーブルや権限を確認してください。");
+      await showDialog("保存に失敗", "保存に失敗しました（users RLS/権限を確認）");
       return;
     }
 
@@ -915,14 +873,13 @@ function updateCarActiveUi(){
       await loadOrAskUserName();
 
       initCalendar();
-      await loadEvents();
-      await loadMyReservationsAll();
 
-      setStatus(`ログイン中：${me.displayName}`);
+      await safeReloadAll();
+
     }catch(e){
       console.error(e);
-      setStatus("初期化エラー：設定（LIFF/Supabase）を確認してください");
-      await showDialog("初期化エラー", "初期化に失敗しました。");
+      setStatus("初期化エラー：設定（LIFF/Supabase/RLS）を確認してください");
+      await showDialog("初期化エラー", "初期化に失敗しました。\nSupabaseのRLS（SELECT権限）を確認してください。");
     }
   })();
 </script>
