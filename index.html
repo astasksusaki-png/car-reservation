@@ -404,15 +404,21 @@
     return true;
   }
 
-  async function loadCars(){
-    const { data, error } = await sb.from("cars").select("*").order("id");
-    if(error) throw error;
+async function loadCars(){
+  const { data, error } = await sb.from("cars").select("*").order("id");
+  if(error) throw error;
 
-    carsMap = {};
-    data.forEach(c => { carsMap[c.id] = c.name; });
+  // ✅ 使用中(true)だけを表示
+  const activeCars = (data || []).filter(c => c.is_active !== false);
 
-    $("car").innerHTML = data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+  $("car").innerHTML = activeCars.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+
+  // もし全車点検中なら
+  if(activeCars.length === 0){
+    $("car").innerHTML = `<option value="">利用可能な車がありません</option>`;
   }
+}
+
 
   function subscribeCarsRealtime(){
     if(carsChannel){
@@ -423,7 +429,7 @@
     carsChannel = sb.channel("cars-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "cars" }, async () => {
         const current = $("car").value;
-        await loadCars();
+        await );
         if(current) $("car").value = current;
       })
       .subscribe();
@@ -473,6 +479,15 @@
   }
 
   async function createReservation(carId, startISO, endISO, note){
+    // ✅ 選択中の車が点検中でないか確認
+  const { data: car, error: carErr } = await sb.from("cars").select("is_active").eq("id", carId).maybeSingle();
+  if(carErr) throw carErr;
+  if(car && car.is_active === false){
+    await showDialog("予約できません", "この車は現在「点検中」で使用停止になっています。");
+    return false;
+  }
+
+    
     const overlap = await hasOverlap(carId, startISO, endISO, null);
     if(overlap){
       await showDialog("予約できません", "その時間帯はすでに予約があります。別の車両か時間を変更してください。");
@@ -889,7 +904,7 @@ function initCalendar(){
       const ok = await initLiff();
       if(!ok) return;
 
-      await loadCars();
+      await );
       subscribeCarsRealtime();
       await loadOrAskUserName();
 
