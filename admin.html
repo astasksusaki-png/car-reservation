@@ -285,242 +285,605 @@
 
     // ★重要：user_id を取得（クリック編集に必要）
     let q = sb.from("reservations")
-      .select("id, car_id, user_id, user_name, start_time, end_time, note")
-      .order("start_time", { ascending: false });
+      .select("id, car_id, user_id, u<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>アスタスク株式会社　社用車予約</title>
 
-    if(p.car !== "all") q = q.eq("car_id", Number(p.car));
+  <style>
+    body{font-family:system-ui, -apple-system, "Segoe UI", sans-serif; margin:12px; line-height:1.5;}
 
-    if(p.mode === "future"){
-      q = q.gte("start_time", p.startISO);
+    .topbar{
+      display:flex;
+      flex-direction: column;
+      align-items:flex-start;
+      gap:6px;
+      margin-bottom:10px;
     }
-    if(p.mode === "range"){
-      if(p.invalid) return { data:[], error:null, invalid:true };
-      q = q.gte("start_time", p.startISO).lt("start_time", p.endISO);
+
+    .badge{font-size:13px; color:#444;}
+    select, button, input{padding:10px; font-size:16px;}
+    #status{font-size:13px; color:#666;}
+    .hint{font-size:12px; color:#666; margin:6px 0 10px;}
+    .fc .fc-toolbar-title{font-size:18px;}
+
+    .fc .fc-col-header-cell-cushion{
+      white-space: normal;
+      font-size: 12px;
+      line-height: 1.2;
+      padding: 4px 2px;
     }
 
-    const { data, error } = await q;
-    return { data: data || [], error, invalid:false };
+    .overlay{
+      position:fixed; inset:0; background:rgba(0,0,0,.45);
+      display:none; align-items:center; justify-content:center; padding:16px; z-index:9999;
+    }
+    .modal{
+      width:100%;
+      max-width:420px;
+      background:#fff;
+      border-radius:14px;
+      padding:14px;
+      box-shadow:0 10px 30px rgba(0,0,0,.2);
+      box-sizing:border-box;
+    }
+    .modal h3{margin:0 0 8px 0; font-size:18px;}
+    .modal .row{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+    .modal label{display:block; font-size:13px; color:#444; margin-top:10px;}
+    .modal textarea{
+      width:100%;
+      max-width:100%;
+      box-sizing:border-box;
+      padding:10px;
+      font-size:16px;
+      margin-top:6px;
+      resize:vertical;
+    }
+    .modal input{
+      width:100%;
+      max-width:100%;
+      box-sizing:border-box;
+      padding:10px;
+      font-size:16px;
+      margin-top:6px;
+    }
+    .modal .actions{display:flex; gap:10px; justify-content:flex-end; margin-top:12px;}
+    .small{font-size:12px; color:#666;}
+    .pill{display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:12px; color:#444;}
+
+    /* 予約の見え方 */
+    .fc .busy-other{ opacity: 0.35; }
+    .fc .busy-other .fc-event-title,
+    .fc .busy-other .fc-event-time{ display: none !important; }
+    .fc .mine-event{ font-weight: 600; }
+  </style>
+
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <h2 style="margin:0;"><b>アスタスク株式会社　社用車予約</b></h2>
+    <span id="status">初期化中…</span>
+
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <span class="badge">車：</span>
+      <select id="car"></select>
+      <button id="reloadBtn">予約再読み込み</button>
+    </div>
+  </div>
+
+  <div class="hint">
+    ・時間枠をタップして開始→終了を15分刻みで選択<br>
+    ・終日をタップすると 00:00〜24:00 を選択できます<br>
+    ・予約表示名：<span id="displayName" class="pill">未設定</span>
+  </div>
+
+  <div id="calendar"></div>
+
+  <!-- 予約モーダル -->
+  <div id="overlay" class="overlay">
+    <div class="modal">
+      <h3>予約作成</h3>
+      <div id="modalDate" class="small"></div>
+
+      <div class="row">
+        <div>
+          <label>開始（15分刻み）</label>
+          <select id="startSel"></select>
+        </div>
+        <div>
+          <label>終了（15分刻み）</label>
+          <select id="endSel"></select>
+        </div>
+      </div>
+
+      <label>用途メモ（任意）</label>
+      <textarea id="note" rows="2" placeholder="例：顧客訪問、備品搬入など"></textarea>
+
+      <div class="actions">
+        <button id="cancelModalBtn">キャンセル</button>
+        <button id="saveModalBtn">予約する</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 初回ログイン：名前入力モーダル -->
+  <div id="nameOverlay" class="overlay">
+    <div class="modal">
+      <h3>お名前の入力（初回のみ）</h3>
+      <div class="small">苗字・名前を入力してください（予約・管理画面に反映されます）</div>
+
+      <label>苗字</label>
+      <input id="lastName" type="text" placeholder="例：山田" />
+
+      <label>名前</label>
+      <input id="firstName" type="text" placeholder="例：太郎" />
+
+      <div class="actions">
+        <button id="saveNameBtn">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 共通ダイアログ（alert/confirm代わり） -->
+  <div id="dlgOverlay" class="overlay">
+    <div class="modal">
+      <h3 id="dlgTitle">お知らせ</h3>
+      <div id="dlgMsg" style="margin-top:8px; white-space:pre-wrap;"></div>
+      <div class="actions" style="margin-top:12px;">
+        <button id="dlgOkBtn">OK</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // ✅ あなたの値
+  const LIFF_ID = "2008829976-rJa7ANlR";
+  const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = (id)=>document.getElementById(id);
+
+  let calendar = null;
+  let carsChannel = null;
+
+  let me = { userId: null, displayName: null };
+  let userProfile = { fullName: null };
+  let modalYmd = null;
+
+  const pad = (n)=>String(n).padStart(2,"0");
+  const TIMES = [...Array(96)].map((_,i)=>`${pad(Math.floor(i/4))}:${pad((i%4)*15)}`);
+
+  function setStatus(text){ $("status").textContent = text; }
+
+  function toYmd(d){
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   }
 
-  async function loadReservations(){
-    const { data, error, invalid } = await fetchReservationsForTable();
+  function toISOFromYmdTime(ymd, hhmm){
+    const [y, m, d] = ymd.split("-").map(Number);
+    if (hhmm === "24:00") {
+      const dt = new Date(y, m-1, d+1, 0, 0, 0, 0);
+      return dt.toISOString();
+    }
+    const [hh, mm] = hhmm.split(":").map(Number);
+    const dt = new Date(y, m-1, d, hh, mm, 0, 0);
+    return dt.toISOString();
+  }
 
-    if(invalid){
-      $("reservationsBox").innerHTML = `<div class="small">開始日と終了日を入力してください。</div>`;
-      return;
-    }
-    if(error){
-      console.error(error);
-      $("reservationsBox").innerHTML = `<div class="small">取得に失敗しました。</div>`;
-      return;
-    }
-    if(!data.length){
-      $("reservationsBox").innerHTML = `<div class="small">予約はありません</div>`;
-      return;
-    }
+  function floorTo15FromDateStr(dateStr){
+    const m = dateStr.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/);
+    if(!m) return null;
+    const ymd = m[1];
+    const hh = m[2];
+    const mm = parseInt(m[3], 10);
+    const floored = Math.floor(mm / 15) * 15;
+    const mm2 = String(floored).padStart(2, "0");
+    return { ymd, hhmm: `${hh}:${mm2}` };
+  }
 
-    $("reservationsBox").innerHTML = `
-      <table>
-        <thead>
-          <tr><th>車</th><th>日付</th><th>時間</th><th>利用者（クリックで編集）</th><th>用途</th></tr>
-        </thead>
-        <tbody>
-          ${data.map(r=>{
-            const s=new Date(r.start_time), e=new Date(r.end_time);
-            const carName = carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`;
-            const uname = r.user_name || "(未設定)";
-            const uid = r.user_id || "";
-            return `
-              <tr>
-                <td>${carName}</td>
-                <td>${fmtYmd(s)}</td>
-                <td>${fmtHm(s)}〜${fmtHm(e)}</td>
-                <td>
-                  <span class="userLink" data-uid="${uid}" data-uname="${uname.replaceAll('"','&quot;')}">${uname}</span>
-                </td>
-                <td>${r.note||""}</td>
-              </tr>
-            `;
-          }).join("")}
-        </tbody>
-      </table>
+  function showDialog(title, message){
+    $("dlgTitle").textContent = title;
+    $("dlgMsg").textContent = message;
+    $("dlgOverlay").style.display = "flex";
+
+    return new Promise(resolve => {
+      const btn = $("dlgOkBtn");
+      const handler = () => {
+        btn.removeEventListener("click", handler);
+        $("dlgOverlay").style.display = "none";
+        resolve(true);
+      };
+      btn.addEventListener("click", handler);
+    });
+  }
+
+  function showConfirm(title, message, okText="はい", cancelText="いいえ"){
+    $("dlgTitle").textContent = title;
+    $("dlgMsg").textContent = message;
+
+    const actions = $("dlgOverlay").querySelector(".actions");
+    actions.innerHTML = `
+      <button id="dlgCancelBtn">${cancelText}</button>
+      <button id="dlgOkBtn2">${okText}</button>
     `;
 
-    // ✅ 利用者名クリック → usersから現在名を引いてモーダル表示
-    document.querySelectorAll(".userLink").forEach(el=>{
-      el.addEventListener("click", async ()=>{
-        const uid = el.getAttribute("data-uid");
-        if(!uid){
-          alert("この予約には user_id がありません（古いデータの可能性）");
-          return;
-        }
+    $("dlgOverlay").style.display = "flex";
 
-        // users に登録があればそれを優先表示
-        const { data, error } = await sb
-          .from("users")
-          .select("last_name, first_name")
-          .eq("user_id", uid)
-          .maybeSingle();
+    return new Promise(resolve=>{
+      const okBtn = document.getElementById("dlgOkBtn2");
+      const cancelBtn = document.getElementById("dlgCancelBtn");
 
-        if(error){
-          console.error(error);
-          // usersに無くても編集させる
-          showNameModal(uid, "", "");
-          return;
-        }
+      const cleanup = ()=>{
+        $("dlgOverlay").style.display = "none";
+        actions.innerHTML = `<button id="dlgOkBtn">OK</button>`;
+      };
 
-        const last = data?.last_name || "";
-        const first = data?.first_name || "";
-        showNameModal(uid, last, first);
-      });
+      okBtn.addEventListener("click", ()=>{ cleanup(); resolve(true); });
+      cancelBtn.addEventListener("click", ()=>{ cleanup(); resolve(false); });
     });
   }
 
-  // ===== CSV（期間指定時のみ）=====
-  function csvEscape(v){
-    const s = String(v ?? "");
-    if(/[",\n\r]/.test(s)) return `"${s.replaceAll('"','""')}"`;
-    return s;
+  function openReservationModalByPicked(ymd, startHHMM){
+    modalYmd = ymd;
+
+    $("startSel").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
+    $("endSel").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
+
+    $("startSel").value = startHHMM;
+
+    const [h, m] = startHHMM.split(":").map(Number);
+    const startMin = h*60 + m;
+    const endMin = Math.min(startMin + 30, 24*60);
+    const endDefault = (endMin >= 24*60) ? "24:00" : `${String(Math.floor(endMin/60)).padStart(2,"0")}:${String(endMin%60).padStart(2,"0")}`;
+    $("endSel").value = endDefault;
+
+    $("note").value = "";
+    $("modalDate").textContent = `${modalYmd}`;
+    $("overlay").style.display = "flex";
   }
-  function downloadTextFile(filename, text){
-    const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+
+  function openReservationModalAllDay(dateObj){
+    modalYmd = toYmd(dateObj);
+
+    $("startSel").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
+    $("endSel").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
+
+    $("startSel").value = "00:00";
+    $("endSel").value = "24:00";
+
+    $("note").value = "";
+    $("modalDate").textContent = `${modalYmd}（終日）`;
+    $("overlay").style.display = "flex";
   }
-  async function downloadCsv(){
-    if($("modeFilter").value !== "range"){
-      alert("CSVダウンロードは「期間指定」に切り替えてください。");
-      return;
+
+  function closeReservationModal(){ $("overlay").style.display = "none"; }
+  function showNameModal(){ $("nameOverlay").style.display = "flex"; }
+  function hideNameModal(){ $("nameOverlay").style.display = "none"; }
+
+  async function initLiff(){
+    await liff.init({ liffId: LIFF_ID });
+    if(!liff.isLoggedIn()){
+      setStatus("未ログイン：ログインします…");
+      liff.login();
+      return false;
     }
-    const p = getFilterParams();
-    if(p.invalid){
-      alert("開始日と終了日を入力してください。");
+    const profile = await liff.getProfile();
+    me.userId = profile.userId;
+    me.displayName = profile.displayName;
+    setStatus(`ログイン中：${me.displayName}`);
+    return true;
+  }
+
+  async function loadCars(){
+    const { data, error } = await sb.from("cars").select("*").order("id");
+    if(error) throw error;
+    $("car").innerHTML = data.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
+  }
+
+  function subscribeCarsRealtime(){
+    if(carsChannel){
+      try { sb.removeChannel(carsChannel); } catch(_) {}
+      carsChannel = null;
+    }
+
+    carsChannel = sb.channel("cars-changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: "cars" }, async () => {
+        const current = $("car").value;
+        await loadCars();
+        if(current) $("car").value = current;
+      })
+      .subscribe();
+  }
+
+  async function loadOrAskUserName(){
+    const { data, error } = await sb
+      .from("users")
+      .select("last_name, first_name")
+      .eq("user_id", me.userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error(error);
+      await showDialog("設定エラー", "usersテーブルが見つからない可能性があります。Supabaseで users テーブルを作成してください。");
       return;
     }
 
-    let q = sb.from("reservations")
-      .select("car_id, user_name, start_time, end_time, note")
-      .gte("start_time", p.startISO).lt("start_time", p.endISO)
+    if (data && data.last_name && data.first_name) {
+      userProfile.fullName = `${data.last_name} ${data.first_name}`;
+      $("displayName").textContent = userProfile.fullName;
+      return;
+    }
+
+    $("displayName").textContent = "未設定";
+    $("lastName").value = "";
+    $("firstName").value = "";
+    showNameModal();
+  }
+
+  async function hasOverlap(carId, startISO, endISO){
+    const { data, error } = await sb
+      .from("reservations")
+      .select("id")
+      .eq("car_id", carId)
+      .lt("start_time", endISO)
+      .gt("end_time", startISO)
+      .limit(1);
+
+    if(error) throw error;
+    return data.length > 0;
+  }
+
+  async function createReservation(carId, startISO, endISO, note){
+    const overlap = await hasOverlap(carId, startISO, endISO);
+    if(overlap){
+      await showDialog("予約できません", "その時間帯はすでに予約があります。\n別の車両か時間を変更してください。");
+      return false;
+    }
+
+    const { error } = await sb.from("reservations").insert({
+      car_id: carId,
+      user_id: me.userId,
+      user_name: userProfile.fullName ?? me.displayName,
+      start_time: startISO,
+      end_time: endISO,
+      note: (note || "").trim()
+    });
+
+    if(error) throw error;
+    return true;
+  }
+
+  // ★キャンセル確認：車名＋時間を表示
+  async function cancelReservation(reservationId, carName, dateText, startText, endText){
+    const msg =
+      `車：${carName}\n` +
+      `日付：${dateText}\n` +
+      `時間：${startText}〜${endText}\n` +
+      `この予約を取り消します。よろしいですか？`;
+
+    const yes = await showConfirm("予約をキャンセルしますか？", msg, "キャンセルする", "やめる");
+    if(!yes) return false;
+
+    const { error } = await sb
+      .from("reservations")
+      .delete()
+      .eq("id", reservationId)
+      .eq("user_id", me.userId);
+
+    if(error){
+      await showDialog("キャンセルできません", "キャンセルできませんでした（自分の予約のみキャンセル可）");
+      return false;
+    }
+
+    await showDialog("キャンセルしました", "予約を取り消しました。");
+    return true;
+  }
+
+  async function loadEvents(){
+    if(!calendar) return;
+
+    const view = calendar.view;
+    const carId = Number($("car").value);
+
+    const startISO = view.activeStart.toISOString();
+    const endISO = view.activeEnd.toISOString();
+
+    const { data, error } = await sb
+      .from("reservations")
+      .select("id, user_id, user_name, start_time, end_time, note")
+      .eq("car_id", carId)
+      .lt("start_time", endISO)
+      .gt("end_time", startISO)
       .order("start_time", { ascending: true });
 
-    if(p.car !== "all") q = q.eq("car_id", Number(p.car));
-
-    const { data, error } = await q;
     if(error){
       console.error(error);
-      alert("CSVの取得に失敗しました。");
+      await showDialog("取得エラー", "予約データの取得に失敗しました");
       return;
     }
 
-    const rows = data || [];
-    const header = ["車","日付","開始","終了","利用者","用途メモ"];
-    const lines = [header.map(csvEscape).join(",")];
+    calendar.removeAllEvents();
 
-    rows.forEach(r=>{
-      const s = new Date(r.start_time);
-      const e = new Date(r.end_time);
-      const carName = carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`;
+    data.forEach(r=>{
+      const isMine = (r.user_id === me.userId);
+      const title = isMine ? `（自分）${r.note ? r.note : ""}`.trim() : "";
 
-      lines.push([
-        carName,
-        fmtYmd(s),
-        fmtHm(s),
-        fmtHm(e),
-        r.user_name || "",
-        r.note || ""
-      ].map(csvEscape).join(","));
+      calendar.addEvent({
+        id: r.id,
+        title,
+        start: new Date(r.start_time),
+        end: new Date(r.end_time),
+        classNames: isMine ? ["mine-event"] : ["busy-other"],
+        extendedProps: {
+          uid: r.user_id,
+          user_name: r.user_name
+        }
+      });
+    });
+  }
+
+  function initCalendar(){
+    calendar = new FullCalendar.Calendar($("calendar"),{
+      locale:"ja",
+      timeZone:"local",
+      firstDay: 1,
+      initialView:"timeGridWeek",
+
+      buttonText:{today:"今日", timeGridDay:"日", timeGridWeek:"週"},
+      headerToolbar:{left:"prev,next today", center:"title", right:"timeGridDay,timeGridWeek"},
+
+      dayHeaderContent:(arg)=>{
+        const d = arg.date;
+        const m = d.getMonth()+1;
+        const day = d.getDate();
+        const wd = ["日","月","火","水","木","金","土"][d.getDay()];
+        return { html: `${m}/${day}<br>(${wd})` };
+      },
+
+      allDaySlot:true,
+      allDayText:"終日",
+
+      slotDuration:"00:15:00",
+      snapDuration:"00:15:00",
+
+      slotMinTime:"00:00:00",
+      slotMaxTime:"24:00:00",
+
+      slotLabelFormat:{hour:"2-digit", minute:"2-digit", hour12:false},
+      eventTimeFormat:{hour:"2-digit", minute:"2-digit", hour12:false},
+
+      selectable:false,
+      datesSet: loadEvents,
+
+      dateClick:(info)=>{
+        if(info.allDay){
+          openReservationModalAllDay(info.date);
+          return;
+        }
+        const picked = floorTo15FromDateStr(info.dateStr);
+        if(!picked){
+          const d = new Date(info.date);
+          openReservationModalByPicked(toYmd(d), `${pad(d.getHours())}:${pad(d.getMinutes())}`);
+          return;
+        }
+        openReservationModalByPicked(picked.ymd, picked.hhmm);
+      },
+
+      eventClick: async (info)=>{
+        const isMine = info.event.extendedProps.uid === me.userId;
+
+        const fmt = (d) => `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+        const start = info.event.start ? fmt(info.event.start) : "";
+        const end = info.event.end ? fmt(info.event.end) : "";
+
+        // ✅ 日付を追加（YYYY-MM-DD）
+        const d0 = info.event.start || new Date();
+        const dateText = toYmd(d0);
+
+        if(isMine){
+          const carName = $("car").options[$("car").selectedIndex]?.textContent || "";
+          const ok = await cancelReservation(info.event.id, carName, dateText, start, end);
+          if(ok) await loadEvents();
+          return;
+        }
+
+        const who = info.event.extendedProps.user_name || "不明";
+
+        // ✅ 他人予約ポップアップ：日付＋時間＋利用者
+        await showDialog(
+          "予約済み",
+          `日付：${dateText}\n時間：${start}〜${end}\n利用者：${who}`
+        );
+      }
     });
 
-    const csv = "\uFEFF" + lines.join("\n");
-    const sYmd = $("rangeStart").value;
-    const eYmd = $("rangeEnd").value;
-    const carPart = (p.car === "all") ? "全車" : (carsMap?.[Number(p.car)] ?? `車${p.car}`);
-    const filename = `社用車予約_${carPart}_${sYmd}〜${eYmd}.csv`;
-
-    downloadTextFile(filename, csv);
+    calendar.render();
   }
 
-  // ===== 名前保存：users + reservations.user_name を一括更新 =====
-  $("cancelNameBtn").addEventListener("click", hideNameModal);
+  $("reloadBtn").addEventListener("click", loadEvents);
+  $("car").addEventListener("change", loadEvents);
+  $("cancelModalBtn").addEventListener("click", ()=>{ $("overlay").style.display="none"; });
+
+  $("saveModalBtn").addEventListener("click", async ()=>{
+    try{
+      if(!userProfile.fullName){
+        await showDialog("名前未登録", "先に「苗字・名前」の登録をしてください。");
+        showNameModal();
+        return;
+      }
+
+      const carId = Number($("car").value);
+      const startStr = $("startSel").value;
+      const endStr = $("endSel").value;
+
+      const startISO = toISOFromYmdTime(modalYmd, startStr);
+      const endISO = toISOFromYmdTime(modalYmd, endStr);
+
+      if(new Date(startISO) >= new Date(endISO)){
+        await showDialog("入力エラー", "終了は開始より後にしてください。");
+        return;
+      }
+
+      const ok = await createReservation(carId, startISO, endISO, $("note").value);
+      if(ok){
+        $("overlay").style.display="none";
+        await loadEvents();
+      }
+    }catch(e){
+      console.error(e);
+      await showDialog("予約に失敗", "予約に失敗しました（設定値やDBを確認）");
+    }
+  });
 
   $("saveNameBtn").addEventListener("click", async ()=>{
-    if(!editingUserId) return;
-
-    const last = ($("editLastName").value || "").trim();
-    const first = ($("editFirstName").value || "").trim();
+    const last = $("lastName").value.trim();
+    const first = $("firstName").value.trim();
 
     if(!last || !first){
-      alert("苗字・名前を入力してください。");
+      await showDialog("入力エラー", "苗字と名前を入力してください。");
       return;
     }
 
-    const newFull = `${last} ${first}`;
+    const { error } = await sb.from("users").upsert({
+      user_id: me.userId,
+      last_name: last,
+      first_name: first
+    });
 
-    $("saveNameBtn").disabled = true;
-    try{
-      // 1) users 更新
-      const { error: e1 } = await sb.from("users").upsert({
-        user_id: editingUserId,
-        last_name: last,
-        first_name: first
-      });
-      if(e1) throw e1;
-
-      // 2) reservations の表示名も一括更新
-      const { error: e2 } = await sb
-        .from("reservations")
-        .update({ user_name: newFull })
-        .eq("user_id", editingUserId);
-      if(e2) throw e2;
-
-      alert("保存しました。予約表示名も更新されます（画面再読み込みで反映）。");
-      hideNameModal();
-      await loadReservations();
-    }catch(e){
-      console.error(e);
-      alert("保存に失敗しました（権限/カラム名を確認）");
-    }finally{
-      $("saveNameBtn").disabled = false;
+    if(error){
+      console.error(error);
+      await showDialog("保存に失敗", "保存に失敗しました。Supabaseの users テーブルや権限を確認してください。");
+      return;
     }
+
+    userProfile.fullName = `${last} ${first}`;
+    $("displayName").textContent = userProfile.fullName;
+    hideNameModal();
   });
-  
 
-  // UI
-  function syncRangeBox(){
-    $("rangeBox").style.display = ($("modeFilter").value === "range") ? "flex" : "none";
-  }
-  $("reloadBtn").onclick = async ()=>{ await loadCars(); await loadReservations(); };
-  $("carFilter").onchange = loadReservations;
-  $("modeFilter").onchange = async ()=>{ syncRangeBox(); await loadReservations(); };
-  $("applyRangeBtn").onclick = loadReservations;
-  $("downloadCsvBtn").onclick = downloadCsv;
-
-  // 起動
-  (async()=>{
+  (async ()=>{
     try{
-      await initLiff();
-      await requireAdmin();
-
-      // デフォルト期間：今日〜30日後
-      const t = todayStartLocal();
-      const t2 = new Date(t.getFullYear(), t.getMonth(), t.getDate()+30, 0,0,0,0);
-      $("rangeStart").value = fmtYmd(t);
-      $("rangeEnd").value = fmtYmd(t2);
-
-      syncRangeBox();
+      const ok = await initLiff();
+      if(!ok) return;
 
       await loadCars();
-      await loadReservations();
+      subscribeCarsRealtime();
+      await loadOrAskUserName();
 
-      $("status").textContent = "表示中";
+      initCalendar();
+      await loadEvents();
     }catch(e){
       console.error(e);
+      setStatus("初期化エラー：設定（LIFF/Supabase）を確認してください");
+      await showDialog("初期化エラー", "初期化に失敗しました。");
     }
   })();
 </script>
