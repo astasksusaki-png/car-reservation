@@ -58,7 +58,7 @@
       <select id="carFilter">
         <option value="all">全車</option>
       </select>
-      <span class="small">※予約数が少ない前提で、一覧は全件表示</span>
+      <span class="small">※全件表示</span>
     </div>
 
     <div id="reservationsBox" style="margin-top:10px;">読み込み中…</div>
@@ -93,7 +93,6 @@
       liff.login();
       return false;
     }
-
     const profile = await liff.getProfile();
     me.userId = profile.userId;
     me.displayName = profile.displayName;
