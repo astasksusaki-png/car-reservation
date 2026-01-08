@@ -796,11 +796,11 @@
     return;
   }
 
-  // 他人の予約：日付＋時間＋利用者
-  const who = info.event.extendedProps.user_name || "不明";
+  // 他人の予約：利用者＋日付＋時間
+  const who = info.user_name.event.extendedProps || "不明";
   await showDialog(
     "予約済み",
-    `日付：${dateText}\n時間：${start}〜${end}\n利用者：${who}`
+    `利用者：${who}\n時間：${start}〜${end}\n日付：${dateText}`
   );
 },
 
