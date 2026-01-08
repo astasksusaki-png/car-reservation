@@ -772,21 +772,38 @@
         openReservationModalNewByPicked(picked.ymd, picked.hhmm);
       },
 
-      eventClick: async (info)=>{
-        const isMine = info.event.extendedProps.uid === me.userId;
+     eventClick: async (info)=>{
+  const isMine = info.event.extendedProps.uid === me.userId;
 
-        const fmt = (d) => `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-        const start = info.event.start ? fmt(info.event.start) : "";
-        const end = info.event.end ? fmt(info.event.end) : "";
+  // 24時間表記 HH:MM
+  const fmt = (d) => `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
 
-        if(isMine){
-          const carName = carsMap?.[Number($("car").value)] ?? "";
-          const d = info.event.start;
-          const dateText = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-          const ok = await cancelReservation(info.event.id, carName, dateText, start, end);
-          if(ok) await loadEvents();
-          return;
-        }
+  const startD = info.event.start ? new Date(info.event.start) : null;
+  const endD   = info.event.end ? new Date(info.event.end) : null;
+
+  const start = startD ? fmt(startD) : "";
+  const end   = endD ? fmt(endD) : "";
+
+  // ✅ 日付（YYYY-MM-DD）※ toYmd を使わずここで確実に作る
+  const dateText = startD
+    ? `${startD.getFullYear()}-${String(startD.getMonth()+1).padStart(2,"0")}-${String(startD.getDate()).padStart(2,"0")}`
+    : "";
+
+  if(isMine){
+    const carName = $("car").options[$("car").selectedIndex]?.textContent || "";
+    const ok = await cancelReservation(info.event.id, carName, dateText, start, end);
+    if(ok) await loadEvents();
+    return;
+  }
+
+  // 他人の予約：日付＋時間＋利用者
+  const who = info.event.extendedProps.user_name || "不明";
+  await showDialog(
+    "予約済み",
+    `日付：${dateText}\n時間：${start}〜${end}\n利用者：${who}`
+  );
+},
+
 
         const who = info.event.extendedProps.user_name || "不明";
         await showDialog("予約済み", `利用者：${who}\n時間：${start}〜${end}`);
