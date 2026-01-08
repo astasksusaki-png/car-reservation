@@ -882,6 +882,14 @@
       await showDialog("初期化エラー", "初期化に失敗しました。\nSupabaseのRLS（SELECT権限）を確認してください。");
     }
   })();
+
+  function showSupabaseError(where, error){
+  const msg = `[${where}] ${error?.message || error}`;
+  console.error(msg, error);
+  $("status").textContent = msg;
+  alert(msg);
+}
+
 </script>
 </body>
 </html>
