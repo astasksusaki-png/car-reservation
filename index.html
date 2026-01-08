@@ -804,14 +804,6 @@ eventClick: async (info)=>{
     `利用者：${who}\n日付：${dateText}\n時間：${start}〜${end}`
   );
 },
-
-
-
-        const who = info.event.extendedProps.user_name || "不明";
-        await showDialog("予約済み", `利用者：${who}\n時間：${start}〜${end}`);
-      }
-    });
-
     calendar.render();
   }
 
