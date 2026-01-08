@@ -772,7 +772,7 @@
         openReservationModalNewByPicked(picked.ymd, picked.hhmm);
       },
 
-     eventClick: async (info)=>{
+eventClick: async (info)=>{
   const isMine = info.event.extendedProps.uid === me.userId;
 
   // 24時間表記 HH:MM
@@ -784,7 +784,7 @@
   const start = startD ? fmt(startD) : "";
   const end   = endD ? fmt(endD) : "";
 
-  // ✅ 日付（YYYY-MM-DD）※ toYmd を使わずここで確実に作る
+  // 日付（YYYY-MM-DD）
   const dateText = startD
     ? `${startD.getFullYear()}-${String(startD.getMonth()+1).padStart(2,"0")}-${String(startD.getDate()).padStart(2,"0")}`
     : "";
@@ -796,13 +796,15 @@
     return;
   }
 
-  // 他人の予約：利用者＋日付＋時間
-  const who = info.user_name.event.extendedProps || "不明";
+  // ✅ 他人の予約：利用者＋日付＋時間
+  const who = info.event.extendedProps.user_name || "不明";
+
   await showDialog(
     "予約済み",
-    `利用者：${who}\n時間：${start}〜${end}\n日付：${dateText}`
+    `利用者：${who}\n日付：${dateText}\n時間：${start}〜${end}`
   );
 },
+
 
 
         const who = info.event.extendedProps.user_name || "不明";
