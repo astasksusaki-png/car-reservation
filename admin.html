@@ -23,6 +23,39 @@
     th{background:#fafafa; position:sticky; top:0;}
     .muted{color:#666;}
     .danger{color:#b00020; font-weight:700;}
+
+    /* クリックできる利用者名 */
+    .userLink{
+      color:#0b57d0;
+      text-decoration:underline;
+      cursor:pointer;
+    }
+
+    /* モーダル */
+    .overlay{
+      position:fixed; inset:0; background:rgba(0,0,0,.45);
+      display:none; align-items:center; justify-content:center; padding:16px; z-index:9999;
+    }
+    .modal{
+      width:100%;
+      max-width:420px;
+      background:#fff;
+      border-radius:14px;
+      padding:14px;
+      box-shadow:0 10px 30px rgba(0,0,0,.2);
+      box-sizing:border-box;
+    }
+    .modal h3{margin:0 0 8px 0; font-size:18px;}
+    .modal label{display:block; font-size:13px; color:#444; margin-top:10px;}
+    .modal input{
+      width:100%;
+      max-width:100%;
+      box-sizing:border-box;
+      padding:10px;
+      font-size:16px;
+      margin-top:6px;
+    }
+    .modal .actions{display:flex; gap:10px; justify-content:flex-end; margin-top:12px;}
   </style>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -38,7 +71,7 @@
     <span id="meName" class="pill">未ログイン</span>
   </div>
 
-  <!-- ✅ ①予約一覧（上）＋ 期間指定CSV -->
+  <!-- ✅ 予約一覧（上）＋ 期間指定CSV -->
   <div class="card" style="margin-top:12px;">
     <div class="row" style="justify-content:space-between;">
       <h3 style="margin:0;">予約一覧（今後の予約が基本）</h3>
@@ -70,24 +103,37 @@
       <span class="small muted">※取り消し（削除）済み予約は含まれません</span>
     </div>
 
+    <div class="small muted" style="margin-top:8px;">
+      ※ 利用者名を押すと、その人の表示名を変更できます（予約表示にも反映されます）
+    </div>
+
     <div id="reservationsBox" style="margin-top:10px;">読み込み中…</div>
   </div>
 
-  <!-- ✅ ② 利用者名の編集（管理者のみ） -->
-  <div class="card" style="margin-top:12px;">
-    <h3 style="margin-top:0;">利用者名の編集（管理者のみ）</h3>
-    <div class="small">
-      ・users の「苗字・名前」を編集できます<br>
-      ・保存すると、その人の reservations.user_name も一括更新され、予約画面の「利用者表示」も変わります（画面の再読み込みで反映）
-    </div>
-    <div id="usersBox" style="margin-top:10px;">読み込み中…</div>
-  </div>
-
-  <!-- ✅ ③ 車名編集（下） -->
+  <!-- ✅ 車名編集（下） -->
   <div class="card" style="margin-top:12px;">
     <h3 style="margin-top:0;">車名の編集</h3>
     <div class="small">※車名を変更して「保存」を押すと即反映されます</div>
     <div id="carsBox" style="margin-top:10px;">読み込み中…</div>
+  </div>
+
+  <!-- ✅ 名前編集モーダル -->
+  <div id="nameOverlay" class="overlay">
+    <div class="modal">
+      <h3>利用者名の変更</h3>
+      <div class="small" id="targetUserId" style="word-break:break-all;"></div>
+
+      <label>苗字</label>
+      <input id="editLastName" type="text" placeholder="例：山田">
+
+      <label>名前</label>
+      <input id="editFirstName" type="text" placeholder="例：太郎">
+
+      <div class="actions">
+        <button id="cancelNameBtn">キャンセル</button>
+        <button id="saveNameBtn">保存</button>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -101,6 +147,9 @@
 
   const me = { userId:null, displayName:null };
   let carsMap = {};
+
+  // 編集対象の user_id を保持
+  let editingUserId = null;
 
   const pad = (n)=>String(n).padStart(2,"0");
   const fmtYmd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
@@ -119,6 +168,18 @@
     const [y,m,d] = ymd.split("-").map(Number);
     const dt = new Date(y, m-1, d+1, 0, 0, 0, 0);
     return dt.toISOString();
+  }
+
+  function showNameModal(uid, last="", first=""){
+    editingUserId = uid;
+    $("targetUserId").textContent = `user_id：${uid}`;
+    $("editLastName").value = last || "";
+    $("editFirstName").value = first || "";
+    $("nameOverlay").style.display = "flex";
+  }
+  function hideNameModal(){
+    $("nameOverlay").style.display = "none";
+    editingUserId = null;
   }
 
   async function initLiff(){
@@ -200,8 +261,8 @@
   }
 
   function getFilterParams(){
-    const car = $("carFilter").value;     // all or id
-    const mode = $("modeFilter").value;   // future or range
+    const car = $("carFilter").value;
+    const mode = $("modeFilter").value;
 
     if(mode === "future"){
       return { car, mode, startISO: todayStartLocal().toISOString(), endISO: null };
@@ -222,8 +283,9 @@
   async function fetchReservationsForTable(){
     const p = getFilterParams();
 
+    // ★重要：user_id を取得（クリック編集に必要）
     let q = sb.from("reservations")
-      .select("id, car_id, user_name, start_time, end_time, note")
+      .select("id, car_id, user_id, user_name, start_time, end_time, note")
       .order("start_time", { ascending: false });
 
     if(p.car !== "all") q = q.eq("car_id", Number(p.car));
@@ -260,18 +322,22 @@
     $("reservationsBox").innerHTML = `
       <table>
         <thead>
-          <tr><th>車</th><th>日付</th><th>時間</th><th>利用者</th><th>用途</th></tr>
+          <tr><th>車</th><th>日付</th><th>時間</th><th>利用者（クリックで編集）</th><th>用途</th></tr>
         </thead>
         <tbody>
           ${data.map(r=>{
             const s=new Date(r.start_time), e=new Date(r.end_time);
             const carName = carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`;
+            const uname = r.user_name || "(未設定)";
+            const uid = r.user_id || "";
             return `
               <tr>
                 <td>${carName}</td>
                 <td>${fmtYmd(s)}</td>
                 <td>${fmtHm(s)}〜${fmtHm(e)}</td>
-                <td>${r.user_name||""}</td>
+                <td>
+                  <span class="userLink" data-uid="${uid}" data-uname="${uname.replaceAll('"','&quot;')}">${uname}</span>
+                </td>
                 <td>${r.note||""}</td>
               </tr>
             `;
@@ -279,102 +345,41 @@
         </tbody>
       </table>
     `;
-  }
 
-  // ===== 利用者名編集（users + reservations.user_name 同期） =====
-  async function loadUsers(){
-    const { data, error } = await sb
-      .from("users")
-      .select("user_id, last_name, first_name")
-      .order("last_name", { ascending: true });
-
-    if(error){
-      console.error(error);
-      $("usersBox").innerHTML = `<div class="small">users の取得に失敗しました。</div>`;
-      return;
-    }
-
-    const rows = data || [];
-    if(rows.length === 0){
-      $("usersBox").innerHTML = `<div class="small">まだ users がありません（誰かが初回ログインすると作成されます）。</div>`;
-      return;
-    }
-
-    $("usersBox").innerHTML = `
-      <div style="display:flex; flex-direction:column; gap:10px;">
-        ${rows.map(u=>{
-          const full = `${u.last_name||""} ${u.first_name||""}`.trim();
-          return `
-            <div class="row">
-              <span class="pill">user_id</span>
-              <span class="small" style="word-break:break-all;">${u.user_id}</span>
-            </div>
-
-            <div class="row">
-              <span class="pill">表示名</span>
-              <input id="uLast_${u.user_id}"  value="${String(u.last_name||"").replaceAll('"','&quot;')}" placeholder="苗字" style="min-width:120px;">
-              <input id="uFirst_${u.user_id}" value="${String(u.first_name||"").replaceAll('"','&quot;')}" placeholder="名前" style="min-width:120px;">
-              <button data-save-user="${u.user_id}">保存</button>
-              <span class="small muted">${full ? "現在：" + full : ""}</span>
-            </div>
-
-            <div style="height:1px; background:#eee;"></div>
-          `;
-        }).join("")}
-      </div>
-    `;
-
-    document.querySelectorAll("button[data-save-user]").forEach(btn=>{
-      btn.onclick = async ()=>{
-        const uid = btn.dataset.saveUser;
-        const last = (document.getElementById("uLast_"+uid).value || "").trim();
-        const first = (document.getElementById("uFirst_"+uid).value || "").trim();
-
-        if(!last || !first){
-          alert("苗字・名前を入力してください。");
+    // ✅ 利用者名クリック → usersから現在名を引いてモーダル表示
+    document.querySelectorAll(".userLink").forEach(el=>{
+      el.addEventListener("click", async ()=>{
+        const uid = el.getAttribute("data-uid");
+        if(!uid){
+          alert("この予約には user_id がありません（古いデータの可能性）");
           return;
         }
 
-        const newFull = `${last} ${first}`;
+        // users に登録があればそれを優先表示
+        const { data, error } = await sb
+          .from("users")
+          .select("last_name, first_name")
+          .eq("user_id", uid)
+          .maybeSingle();
 
-        btn.disabled = true;
-        try{
-          // 1) users を更新（upsert）
-          const { error: e1 } = await sb.from("users").upsert({
-            user_id: uid,
-            last_name: last,
-            first_name: first
-          });
-          if(e1) throw e1;
-
-          // 2) reservations.user_name を一括更新（過去分も含めて表示名を統一）
-          const { error: e2 } = await sb
-            .from("reservations")
-            .update({ user_name: newFull })
-            .eq("user_id", uid);
-          if(e2) throw e2;
-
-          alert("保存しました。予約表示名も更新されます（画面再読み込みで反映）。");
-
-          // 画面も更新
-          await loadUsers();
-          await loadReservations();
-        }catch(e){
-          console.error(e);
-          alert("保存に失敗しました（権限/カラム名を確認）");
-        }finally{
-          btn.disabled = false;
+        if(error){
+          console.error(error);
+          // usersに無くても編集させる
+          showNameModal(uid, "", "");
+          return;
         }
-      };
+
+        const last = data?.last_name || "";
+        const first = data?.first_name || "";
+        showNameModal(uid, last, first);
+      });
     });
   }
 
-  // ===== CSV =====
+  // ===== CSV（期間指定時のみ）=====
   function csvEscape(v){
     const s = String(v ?? "");
-    if(/[",\n\r]/.test(s)){
-      return `"${s.replaceAll('"','""')}"`;
-    }
+    if(/[",\n\r]/.test(s)) return `"${s.replaceAll('"','""')}"`;
     return s;
   }
   function downloadTextFile(filename, text){
@@ -441,12 +446,55 @@
     downloadTextFile(filename, csv);
   }
 
-  // ===== UI =====
+  // ===== 名前保存：users + reservations.user_name を一括更新 =====
+  $("cancelNameBtn").addEventListener("click", hideNameModal);
+
+  $("saveNameBtn").addEventListener("click", async ()=>{
+    if(!editingUserId) return;
+
+    const last = ($("editLastName").value || "").trim();
+    const first = ($("editFirstName").value || "").trim();
+
+    if(!last || !first){
+      alert("苗字・名前を入力してください。");
+      return;
+    }
+
+    const newFull = `${last} ${first}`;
+
+    $("saveNameBtn").disabled = true;
+    try{
+      // 1) users 更新
+      const { error: e1 } = await sb.from("users").upsert({
+        user_id: editingUserId,
+        last_name: last,
+        first_name: first
+      });
+      if(e1) throw e1;
+
+      // 2) reservations の表示名も一括更新
+      const { error: e2 } = await sb
+        .from("reservations")
+        .update({ user_name: newFull })
+        .eq("user_id", editingUserId);
+      if(e2) throw e2;
+
+      alert("保存しました。予約表示名も更新されます（画面再読み込みで反映）。");
+      hideNameModal();
+      await loadReservations();
+    }catch(e){
+      console.error(e);
+      alert("保存に失敗しました（権限/カラム名を確認）");
+    }finally{
+      $("saveNameBtn").disabled = false;
+    }
+  });
+
+  // UI
   function syncRangeBox(){
     $("rangeBox").style.display = ($("modeFilter").value === "range") ? "flex" : "none";
   }
-
-  $("reloadBtn").onclick = async ()=>{ await loadCars(); await loadUsers(); await loadReservations(); };
+  $("reloadBtn").onclick = async ()=>{ await loadCars(); await loadReservations(); };
   $("carFilter").onchange = loadReservations;
   $("modeFilter").onchange = async ()=>{ syncRangeBox(); await loadReservations(); };
   $("applyRangeBtn").onclick = loadReservations;
@@ -467,7 +515,6 @@
       syncRangeBox();
 
       await loadCars();
-      await loadUsers();
       await loadReservations();
 
       $("status").textContent = "表示中";
