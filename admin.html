@@ -22,6 +22,7 @@
     th, td{border-bottom:1px solid #eee; padding:8px; font-size:14px; text-align:left; vertical-align:top;}
     th{background:#fafafa; position:sticky; top:0;}
     .muted{color:#666;}
+    .danger{color:#b00020; font-weight:700;}
   </style>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -72,7 +73,17 @@
     <div id="reservationsBox" style="margin-top:10px;">読み込み中…</div>
   </div>
 
-  <!-- ✅ ②車名編集（下） -->
+  <!-- ✅ ② 利用者名の編集（管理者のみ） -->
+  <div class="card" style="margin-top:12px;">
+    <h3 style="margin-top:0;">利用者名の編集（管理者のみ）</h3>
+    <div class="small">
+      ・users の「苗字・名前」を編集できます<br>
+      ・保存すると、その人の reservations.user_name も一括更新され、予約画面の「利用者表示」も変わります（画面の再読み込みで反映）
+    </div>
+    <div id="usersBox" style="margin-top:10px;">読み込み中…</div>
+  </div>
+
+  <!-- ✅ ③ 車名編集（下） -->
   <div class="card" style="margin-top:12px;">
     <h3 style="margin-top:0;">車名の編集</h3>
     <div class="small">※車名を変更して「保存」を押すと即反映されます</div>
@@ -99,16 +110,12 @@
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
   }
-
   function ymdToLocalStartISO(ymd){
-    // "YYYY-MM-DD" の 00:00(ローカル) を ISOに
     const [y,m,d] = ymd.split("-").map(Number);
     const dt = new Date(y, m-1, d, 0, 0, 0, 0);
     return dt.toISOString();
   }
-
   function ymdToLocalEndExclusiveISO(ymd){
-    // 終了日は「翌日00:00（ローカル）」を上限にする（<=23:59相当）
     const [y,m,d] = ymd.split("-").map(Number);
     const dt = new Date(y, m-1, d+1, 0, 0, 0, 0);
     return dt.toISOString();
@@ -137,10 +144,9 @@
       alert("管理者チェックに失敗しました。");
       throw error;
     }
-
     if(!data){
       document.body.innerHTML = `
-        <h2 style="color:#b00020;">アクセス拒否（管理者のみ）</h2>
+        <h2 class="danger">アクセス拒否（管理者のみ）</h2>
         <div class="small">このアカウントは管理者ではありません。</div>
       `;
       throw new Error("not admin");
@@ -166,22 +172,22 @@
       <div class="row">
         <span class="pill">ID:${c.id}</span>
         <input id="carName_${c.id}" value="${String(c.name||"").replaceAll('"','&quot;')}" style="flex:1; min-width:200px;">
-        <button data-save="${c.id}">保存</button>
+        <button data-save-car="${c.id}">保存</button>
       </div>
     `).join("");
 
-    document.querySelectorAll("button[data-save]").forEach(btn=>{
+    document.querySelectorAll("button[data-save-car]").forEach(btn=>{
       btn.onclick = async ()=>{
-        const id = btn.dataset.save;
+        const id = Number(btn.dataset.saveCar);
         const name = ($("carName_"+id).value || "").trim();
         if(!name) return alert("車名を入力してください");
 
         btn.disabled = true;
         try{
-          const { error } = await sb.from("cars").update({name}).eq("id", Number(id));
+          const { error } = await sb.from("cars").update({name}).eq("id", id);
           if(error) throw error;
           await loadCars();
-          await loadReservations(); // 一覧にも反映
+          await loadReservations();
           alert("保存しました");
         }catch(e){
           console.error(e);
@@ -198,20 +204,17 @@
     const mode = $("modeFilter").value;   // future or range
 
     if(mode === "future"){
-      const startISO = todayStartLocal().toISOString(); // 今日00:00以降
-      return { car, mode, startISO, endISO: null };
+      return { car, mode, startISO: todayStartLocal().toISOString(), endISO: null };
     }
 
-    // range
     const s = $("rangeStart").value;
     const e = $("rangeEnd").value;
-    if(!s || !e) return { car, mode, startISO: null, endISO: null, invalid:true };
+    if(!s || !e) return { car, mode, invalid:true };
 
     return {
-      car,
-      mode,
+      car, mode,
       startISO: ymdToLocalStartISO(s),
-      endISO: ymdToLocalEndExclusiveISO(e), // 終了日は翌日00:00で切る
+      endISO: ymdToLocalEndExclusiveISO(e),
       invalid:false
     };
   }
@@ -221,16 +224,13 @@
 
     let q = sb.from("reservations")
       .select("id, car_id, user_name, start_time, end_time, note")
-      .order("start_time", { ascending: false }); // 新しい順（表示）
+      .order("start_time", { ascending: false });
 
     if(p.car !== "all") q = q.eq("car_id", Number(p.car));
 
-    // 今後のみ：start_time で絞る（表示の基本）
     if(p.mode === "future"){
       q = q.gte("start_time", p.startISO);
     }
-
-    // 期間指定：start_time が期間内のもの（シンプル運用）
     if(p.mode === "range"){
       if(p.invalid) return { data:[], error:null, invalid:true };
       q = q.gte("start_time", p.startISO).lt("start_time", p.endISO);
@@ -247,13 +247,11 @@
       $("reservationsBox").innerHTML = `<div class="small">開始日と終了日を入力してください。</div>`;
       return;
     }
-
     if(error){
       console.error(error);
       $("reservationsBox").innerHTML = `<div class="small">取得に失敗しました。</div>`;
       return;
     }
-
     if(!data.length){
       $("reservationsBox").innerHTML = `<div class="small">予約はありません</div>`;
       return;
@@ -283,6 +281,94 @@
     `;
   }
 
+  // ===== 利用者名編集（users + reservations.user_name 同期） =====
+  async function loadUsers(){
+    const { data, error } = await sb
+      .from("users")
+      .select("user_id, last_name, first_name")
+      .order("last_name", { ascending: true });
+
+    if(error){
+      console.error(error);
+      $("usersBox").innerHTML = `<div class="small">users の取得に失敗しました。</div>`;
+      return;
+    }
+
+    const rows = data || [];
+    if(rows.length === 0){
+      $("usersBox").innerHTML = `<div class="small">まだ users がありません（誰かが初回ログインすると作成されます）。</div>`;
+      return;
+    }
+
+    $("usersBox").innerHTML = `
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        ${rows.map(u=>{
+          const full = `${u.last_name||""} ${u.first_name||""}`.trim();
+          return `
+            <div class="row">
+              <span class="pill">user_id</span>
+              <span class="small" style="word-break:break-all;">${u.user_id}</span>
+            </div>
+
+            <div class="row">
+              <span class="pill">表示名</span>
+              <input id="uLast_${u.user_id}"  value="${String(u.last_name||"").replaceAll('"','&quot;')}" placeholder="苗字" style="min-width:120px;">
+              <input id="uFirst_${u.user_id}" value="${String(u.first_name||"").replaceAll('"','&quot;')}" placeholder="名前" style="min-width:120px;">
+              <button data-save-user="${u.user_id}">保存</button>
+              <span class="small muted">${full ? "現在：" + full : ""}</span>
+            </div>
+
+            <div style="height:1px; background:#eee;"></div>
+          `;
+        }).join("")}
+      </div>
+    `;
+
+    document.querySelectorAll("button[data-save-user]").forEach(btn=>{
+      btn.onclick = async ()=>{
+        const uid = btn.dataset.saveUser;
+        const last = (document.getElementById("uLast_"+uid).value || "").trim();
+        const first = (document.getElementById("uFirst_"+uid).value || "").trim();
+
+        if(!last || !first){
+          alert("苗字・名前を入力してください。");
+          return;
+        }
+
+        const newFull = `${last} ${first}`;
+
+        btn.disabled = true;
+        try{
+          // 1) users を更新（upsert）
+          const { error: e1 } = await sb.from("users").upsert({
+            user_id: uid,
+            last_name: last,
+            first_name: first
+          });
+          if(e1) throw e1;
+
+          // 2) reservations.user_name を一括更新（過去分も含めて表示名を統一）
+          const { error: e2 } = await sb
+            .from("reservations")
+            .update({ user_name: newFull })
+            .eq("user_id", uid);
+          if(e2) throw e2;
+
+          alert("保存しました。予約表示名も更新されます（画面再読み込みで反映）。");
+
+          // 画面も更新
+          await loadUsers();
+          await loadReservations();
+        }catch(e){
+          console.error(e);
+          alert("保存に失敗しました（権限/カラム名を確認）");
+        }finally{
+          btn.disabled = false;
+        }
+      };
+    });
+  }
+
   // ===== CSV =====
   function csvEscape(v){
     const s = String(v ?? "");
@@ -291,7 +377,6 @@
     }
     return s;
   }
-
   function downloadTextFile(filename, text){
     const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -303,21 +388,17 @@
     a.remove();
     URL.revokeObjectURL(url);
   }
-
   async function downloadCsv(){
-    // 期間指定でのみダウンロード
     if($("modeFilter").value !== "range"){
       alert("CSVダウンロードは「期間指定」に切り替えてください。");
       return;
     }
-
     const p = getFilterParams();
     if(p.invalid){
       alert("開始日と終了日を入力してください。");
       return;
     }
 
-    // CSVは見やすいように「古い→新しい」
     let q = sb.from("reservations")
       .select("car_id, user_name, start_time, end_time, note")
       .gte("start_time", p.startISO).lt("start_time", p.endISO)
@@ -334,7 +415,6 @@
 
     const rows = data || [];
     const header = ["車","日付","開始","終了","利用者","用途メモ"];
-
     const lines = [header.map(csvEscape).join(",")];
 
     rows.forEach(r=>{
@@ -342,21 +422,17 @@
       const e = new Date(r.end_time);
       const carName = carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`;
 
-      const line = [
+      lines.push([
         carName,
         fmtYmd(s),
         fmtHm(s),
         fmtHm(e),
         r.user_name || "",
         r.note || ""
-      ].map(csvEscape).join(",");
-
-      lines.push(line);
+      ].map(csvEscape).join(","));
     });
 
-    // Excel対策：UTF-8 BOM を付ける
     const csv = "\uFEFF" + lines.join("\n");
-
     const sYmd = $("rangeStart").value;
     const eYmd = $("rangeEnd").value;
     const carPart = (p.car === "all") ? "全車" : (carsMap?.[Number(p.car)] ?? `車${p.car}`);
@@ -367,19 +443,12 @@
 
   // ===== UI =====
   function syncRangeBox(){
-    const isRange = ($("modeFilter").value === "range");
-    $("rangeBox").style.display = isRange ? "flex" : "none";
+    $("rangeBox").style.display = ($("modeFilter").value === "range") ? "flex" : "none";
   }
 
-  $("reloadBtn").onclick = async ()=>{ await loadCars(); await loadReservations(); };
-
+  $("reloadBtn").onclick = async ()=>{ await loadCars(); await loadUsers(); await loadReservations(); };
   $("carFilter").onchange = loadReservations;
-
-  $("modeFilter").onchange = async ()=>{
-    syncRangeBox();
-    await loadReservations();
-  };
-
+  $("modeFilter").onchange = async ()=>{ syncRangeBox(); await loadReservations(); };
   $("applyRangeBtn").onclick = loadReservations;
   $("downloadCsvBtn").onclick = downloadCsv;
 
@@ -389,7 +458,7 @@
       await initLiff();
       await requireAdmin();
 
-      // デフォルト期間：今日〜30日後（入力が楽になるように）
+      // デフォルト期間：今日〜30日後
       const t = todayStartLocal();
       const t2 = new Date(t.getFullYear(), t.getMonth(), t.getDate()+30, 0,0,0,0);
       $("rangeStart").value = fmtYmd(t);
@@ -398,6 +467,7 @@
       syncRangeBox();
 
       await loadCars();
+      await loadUsers();
       await loadReservations();
 
       $("status").textContent = "表示中";
