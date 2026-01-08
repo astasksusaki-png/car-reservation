@@ -328,22 +328,47 @@
   }
 
   async function loadCarsDropdown(){
-    // ✅ 点検中（is_active=false）は予約画面で非表示
-    const activeCars = (carsAll || []).filter(c => c.is_active !== false);
+  const sel = $("car");
+  const current = sel.value;
 
-    if(activeCars.length === 0){
-      $("car").innerHTML = `<option value="">利用可能な車がありません</option>`;
-      return;
-    }
+  // ✅ 点検中も含めて表示（ラベルを付ける）
+  sel.innerHTML = (carsAll || []).map(c=>{
+    const stop = (c.is_active === false) ? "（点検中）" : "";
+    return `<option value="${c.id}" data-active="${c.is_active !== false ? "1" : "0"}">${c.name}${stop}</option>`;
+  }).join("");
 
-    const current = $("car").value;
-    $("car").innerHTML = activeCars.map(c=>`<option value="${c.id}">${c.name}</option>`).join("");
-
-    // できれば選択維持（点検中になって消えたら先頭へ）
-    if(current && activeCars.some(c=>String(c.id)===String(current))){
-      $("car").value = current;
-    }
+  // 選択維持
+  if(current && (carsAll || []).some(c=>String(c.id)===String(current))){
+    sel.value = current;
   }
+
+  // 1台も無い場合
+  if(!sel.value && (carsAll||[]).length === 0){
+    sel.innerHTML = `<option value="">車が登録されていません</option>`;
+  }
+
+  // ✅ 点検中ならボタンや説明をわかりやすくする（任意）
+  updateCarActiveUi();
+}
+  }
+function updateCarActiveUi(){
+  const sel = $("car");
+  const carId = Number(sel.value);
+  const car = (carsAll || []).find(c => Number(c.id) === carId);
+
+  const isActive = !car || car.is_active !== false;
+
+  // 「予約する」ボタンを押せないように（モーダル内）
+  const saveBtn = $("saveModalBtn");
+  if(saveBtn) saveBtn.disabled = !isActive;
+
+  // 画面上のステータスに一言（任意）
+  if(!isActive){
+    setStatus(`ログイン中：${me.displayName}（選択中の車は点検中）`);
+  }else{
+    setStatus(`ログイン中：${me.displayName}`);
+  }
+}
 
   function subscribeCarsRealtime(){
     if(carsChannel){
@@ -644,6 +669,14 @@
       datesSet: loadEvents,
 
       dateClick:(info)=>{
+          // ✅ 点検中チェック（モーダルを開かない）
+  const carId = Number($("car").value);
+  const car = (carsAll || []).find(c => Number(c.id) === carId);
+  if(car && car.is_active === false){
+    showDialog("予約できません", "この車は現在「点検中」で使用停止になっています。");
+    return;
+  }
+
         if(info.allDay){
           openReservationModalAllDay(info.date);
           return;
@@ -790,7 +823,8 @@
     await loadMyReservationsAll();
   });
 
-  $("car").addEventListener("change", loadEvents);
+  $("car").addEventListener("change", ()=>{ updateCarActiveUi(); loadEvents(); });
+
 
   $("cancelModalBtn").addEventListener("click", ()=>{ $("overlay").style.display="none"; });
   $("cancelEditBtn").addEventListener("click", ()=>{ $("editOverlay").style.display="none"; });
