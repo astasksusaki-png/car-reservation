@@ -101,6 +101,10 @@
   padding:10px 14px;
   font-size:14px;
 }
+/* 時間変更中：元の予約を薄く表示 */
+.fc .original-dim{
+  opacity: 0.25;
+}
 
   </style>
 
@@ -195,6 +199,72 @@
   </div>
 
 <script>
+  // ===== 時間変更（自分の予約）=====
+
+// 編集中の予約ID
+let editingResvId = null;
+
+// カレンダー上で「元の予約」を薄くする
+function setOriginalDimOnCalendar(resvId, on){
+  if(!calendar) return;
+  const ev = calendar.getEventById(resvId);
+  if(!ev) return;
+
+  // classNamesは配列扱いになるので、簡単に「再読み込みで戻す」方式にします
+  // → on=true の時はクラス付与して見た目を薄くする
+  if(on){
+    ev.setProp("classNames", ["mine-event", "original-dim"]);
+  }else{
+    ev.setProp("classNames", ["mine-event"]);
+  }
+}
+
+// 編集モーダルを開く（元の予約を薄くする）
+async function openEditReservationFromList(r){
+  // r: rowsの1件（id, car_id, ymd, startHHMM, endHHMM, note）
+
+  // その車のカレンダーに切り替える（元の予約が見えるように）
+  $("car").value = String(r.car_id);
+  updateDimUi();
+  await loadEvents();
+
+  // 元の予約を薄く
+  editingResvId = r.id;
+  setOriginalDimOnCalendar(editingResvId, true);
+
+  // 編集UIは「予約作成モーダル」を流用（開始/終了/メモ）
+  modalYmd = r.ymd;
+
+  // セレクトを作り直して、値をセット
+  $("startSel").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
+  $("endSel").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
+
+  $("startSel").value = r.startHHMM;
+  $("endSel").value = r.endHHMM;
+  $("note").value = r.note || "";
+
+  // タイトル/日付表示を「時間変更」にする
+  $("modalDate").textContent = `${r.ymd}（時間変更）`;
+
+  // 保存ボタンの表示を変更
+  $("saveModalBtn").textContent = "変更を保存";
+
+  $("overlay").style.display = "flex";
+}
+
+// 編集モーダルを閉じる（元の薄表示を戻す）
+async function closeEditReservationUI(){
+  $("overlay").style.display = "none";
+  $("saveModalBtn").textContent = "予約する";
+
+  if(editingResvId){
+    // きれいに戻すため、イベントを再読込（確実）
+    const id = editingResvId;
+    editingResvId = null;
+    await loadEvents();
+  }
+}
+
   // ✅ あなたの値
   const LIFF_ID = "2008829976-rJa7ANlR";
   const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
@@ -718,7 +788,15 @@ html += `
 
     $("myList").innerHTML = html;
 
-    document.querySelectorAll("[data-cancel]").forEach(btn=>{
+  document.querySelectorAll("[data-edit]").forEach(btn=>{
+  btn.addEventListener("click", async ()=>{
+    const id = btn.getAttribute("data-edit");
+    const r = rows.find(x=>String(x.id)===String(id));
+    if(!r) return;
+    await openEditReservationFromList(r);
+  });
+});
+  document.querySelectorAll("[data-cancel]").forEach(btn=>{
       btn.addEventListener("click", async ()=>{
         const id = btn.getAttribute("data-cancel");
         const r = rows.find(x=>String(x.id)===String(id));
@@ -747,45 +825,101 @@ html += `
     await loadEvents();
   });
 
-  $("cancelModalBtn").addEventListener("click", ()=>{ $("overlay").style.display="none"; });
+$("cancelModalBtn").addEventListener("click", closeEditReservationUI);
 
-  $("saveModalBtn").addEventListener("click", async ()=>{
-    try{
-      if(!userProfile.fullName){
-        await showDialog("名前未登録", "先に「苗字・名前」の登録をしてください。");
-        $("nameOverlay").style.display = "flex";
-        return;
-      }
 
-      const carIdStr = $("car").value;
-      if(!carIdStr){
-        await showDialog("車を選択", "車が選択されていません。");
-        return;
-      }
-
-      const carId = Number(carIdStr);
-      const startStr = $("startSel").value;
-      const endStr = $("endSel").value;
-
-      const startISO = toISOFromYmdTime(modalYmd, startStr);
-      const endISO = toISOFromYmdTime(modalYmd, endStr);
-
-      if(new Date(startISO) >= new Date(endISO)){
-        await showDialog("入力エラー", "終了は開始より後にしてください。");
-        return;
-      }
-
-      const ok = await createReservation(carId, startISO, endISO, $("note").value);
-      if(ok){
-        $("overlay").style.display="none";
-        await loadEvents();
-        await loadMyReservationsAll();
-      }
-    }catch(e){
-      console.error(e);
-      await showDialog("予約に失敗", "予約に失敗しました（設定値やDBを確認）");
+$("saveModalBtn").addEventListener("click", async ()=>{
+  try{
+    if(!userProfile.fullName){
+      await showDialog("名前未登録", "先に「苗字・名前」の登録をしてください。");
+      $("nameOverlay").style.display = "flex";
+      return;
     }
-  });
+
+    const carIdStr = $("car").value;
+    if(!carIdStr){
+      await showDialog("車を選択", "車が選択されていません。");
+      return;
+    }
+
+    // 点検中なら不可
+    const opt = $("car").selectedOptions[0];
+    const isActive = (opt?.dataset.active === "1");
+    if(!isActive){
+      await showDialog("予約できません", "この車は現在「点検中」で使用停止になっています。");
+      return;
+    }
+
+    const carId = Number(carIdStr);
+    const startStr = $("startSel").value;
+    const endStr = $("endSel").value;
+
+    const startISO = toISOFromYmdTime(modalYmd, startStr);
+    const endISO = toISOFromYmdTime(modalYmd, endStr);
+
+    if(new Date(startISO) >= new Date(endISO)){
+      await showDialog("入力エラー", "終了は開始より後にしてください。");
+      return;
+    }
+
+    // ✅ 編集モード（時間変更）
+    if(editingResvId){
+      // 重複チェック（自分のこの予約IDは除外）
+      const overlap = await (async ()=>{
+        let q = sb
+          .from("reservations")
+          .select("id")
+          .eq("car_id", carId)
+          .lt("start_time", endISO)
+          .gt("end_time", startISO)
+          .limit(1)
+          .neq("id", editingResvId);
+
+        const { data, error } = await q;
+        if(error) throw error;
+        return (data || []).length > 0;
+      })();
+
+      if(overlap){
+        await showDialog("変更できません", "その時間帯はすでに予約があります。\n別の時間か別の車両にしてください。");
+        return;
+      }
+
+      // UPDATE（自分の予約のみ）
+      const { error } = await sb
+        .from("reservations")
+        .update({
+          car_id: carId,
+          start_time: startISO,
+          end_time: endISO,
+          note: ($("note").value || "").trim()
+        })
+        .eq("id", editingResvId)
+        .eq("user_id", me.userId);
+
+      if(error) throw error;
+
+      await showDialog("変更しました", "予約時間を変更しました。");
+
+      // UIを閉じてリロード
+      await closeEditReservationUI();
+      await loadMyReservationsAll();
+      return;
+    }
+
+    // ✅ 通常モード（新規予約）
+    const ok = await createReservation(carId, startISO, endISO, $("note").value);
+    if(ok){
+      $("overlay").style.display="none";
+      await loadEvents();
+      await loadMyReservationsAll();
+    }
+  }catch(e){
+    console.error(e);
+    await showDialog("処理に失敗", "処理に失敗しました（設定値やDBを確認）");
+  }
+});
+
 
   $("saveNameBtn").addEventListener("click", async ()=>{
     const last = $("lastName").value.trim();
