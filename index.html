@@ -93,6 +93,15 @@
       border:0; background:#eee; border-radius:999px;
       padding:10px 14px; font-size:14px;
     }
+    .btnNormal{
+  border:0;
+  background:#e8f0fe;
+  color:#174ea6;
+  border-radius:999px;
+  padding:10px 14px;
+  font-size:14px;
+}
+
   </style>
 
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -484,6 +493,28 @@
     await showDialog("キャンセルしました", "予約を取り消しました。");
     return true;
   }
+document.querySelectorAll("[data-edit]").forEach(btn=>{
+  btn.addEventListener("click", async ()=>{
+    const id = btn.getAttribute("data-edit");
+    const r = rows.find(x=>String(x.id)===String(id));
+    if(!r) return;
+
+    // いったん削除
+    const carName = carsMap?.[Number(r.car_id)]?.name ?? "";
+    const ok = await cancelReservation(
+      r.id,
+      carName,
+      r.ymd,
+      r.startHHMM,
+      r.endHHMM
+    );
+    if(!ok) return;
+
+    // 同じ日付・開始時刻で予約モーダルを開く
+    modalYmd = r.ymd;
+    openReservationModalByPicked(r.ymd, r.startHHMM);
+  });
+});
 
   // ===== カレンダーイベント読み込み =====
   async function loadEvents(){
@@ -669,17 +700,19 @@
         const main = `${carName}　${r.startHHMM}〜${r.endHHMM}`;
         const sub = r.note ? `メモ：${r.note}` : "";
 
-        html += `
-          <div class="myCard">
-            <div class="myLeft">
-              <div class="myMain">${main}</div>
-              ${sub ? `<div class="mySub">${sub}</div>` : `<div class="mySub"></div>`}
-            </div>
-            <div class="myActions">
-              <button class="btnDanger" data-cancel="${r.id}">キャンセル</button>
-            </div>
-          </div>
-        `;
+html += `
+  <div class="myCard">
+    <div class="myLeft">
+      <div class="myMain">${main}</div>
+      ${sub ? `<div class="mySub">${sub}</div>` : `<div class="mySub"></div>`}
+    </div>
+    <div class="myActions">
+      <button class="btnNormal" data-edit="${r.id}">時間変更</button>
+      <button class="btnDanger" data-cancel="${r.id}">キャンセル</button>
+    </div>
+  </div>
+`;
+
       });
     });
 
