@@ -23,6 +23,14 @@
     .danger{color:#b00020; font-weight:700;}
     .userLink{ color:#0b57d0; text-decoration:underline; cursor:pointer; }
 
+    /* 時間セルをクリックできる見た目 */
+    .timeLink{
+      color:#0b57d0;
+      text-decoration:underline;
+      cursor:pointer;
+      white-space:nowrap;
+    }
+
     .overlay{
       position:fixed; inset:0; background:rgba(0,0,0,.45);
       display:none; align-items:center; justify-content:center; padding:16px; z-index:9999;
@@ -38,7 +46,7 @@
     }
     .modal h3{margin:0 0 8px 0; font-size:18px;}
     .modal label{display:block; font-size:13px; color:#444; margin-top:10px;}
-    .modal input{
+    .modal input, .modal select, .modal textarea{
       width:100%;
       max-width:100%;
       box-sizing:border-box;
@@ -46,6 +54,8 @@
       font-size:16px;
       margin-top:6px;
     }
+    .modal textarea{ resize:vertical; }
+    .modal .row2{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
     .modal .actions{display:flex; gap:10px; justify-content:flex-end; margin-top:12px;}
 
     .tagStop{
@@ -105,6 +115,7 @@
     </div>
 
     <div class="small muted" style="margin-top:8px;">
+      ※ 時間（青い下線）を押すと、その予約の「時間/車/用途」を変更できます（管理者）<br>
       ※ 利用者名を押すと、その人の表示名を変更できます（予約表示にも反映）
     </div>
 
@@ -127,7 +138,7 @@
   <!-- ✅ 車名編集＋使用停止（点検中） -->
   <div class="card" style="margin-top:12px;">
     <h3 style="margin-top:0;">車名の編集／使用停止（点検中）</h3>
-    <div class="small muted">※ 使用停止にすると予約画面の車リストから非表示（予約不可）にできます</div>
+    <div class="small muted">※ 使用停止にすると予約画面で「点検中」と表示され、予約不可になります</div>
     <div id="carsBox" style="margin-top:10px;">読み込み中…</div>
   </div>
 
@@ -150,6 +161,36 @@
     </div>
   </div>
 
+  <!-- ✅ 予約時間変更モーダル（管理者） -->
+  <div id="resvOverlay" class="overlay">
+    <div class="modal">
+      <h3>予約の時間変更（管理者）</h3>
+      <div id="resvInfo" class="small"></div>
+
+      <label>車</label>
+      <select id="resvCar"></select>
+
+      <div class="row2">
+        <div>
+          <label>開始（15分刻み）</label>
+          <select id="resvStart"></select>
+        </div>
+        <div>
+          <label>終了（15分刻み）</label>
+          <select id="resvEnd"></select>
+        </div>
+      </div>
+
+      <label>用途メモ</label>
+      <textarea id="resvNote" rows="2" placeholder="例：顧客訪問、備品搬入など"></textarea>
+
+      <div class="actions">
+        <button id="resvCancelBtn">閉じる</button>
+        <button id="resvSaveBtn">変更する</button>
+      </div>
+    </div>
+  </div>
+
 <script>
   // ✅ あなたの値
   const LIFF_ID = "2008829976-rJa7ANlR";
@@ -160,12 +201,17 @@
   const $ = (id)=>document.getElementById(id);
 
   const me = { userId:null, displayName:null };
-  let carsMap = {};
+  let carsMap = {};         // id -> name
+  let carsActiveMap = {};   // id -> is_active(true/false)
   let editingUserId = null;
 
+  // 予約編集
+  let editingResvId = null;
+  let editingResvYmd = null; // 開始日基準の日付（YYYY-MM-DD）
   const pad = (n)=>String(n).padStart(2,"0");
   const fmtYmd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   const fmtHm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const TIMES = [...Array(96)].map((_,i)=>`${pad(Math.floor(i/4))}:${pad((i%4)*15)}`);
 
   function todayStartLocal(){
     const now = new Date();
@@ -173,13 +219,17 @@
   }
   function ymdToLocalStartISO(ymd){
     const [y,m,d] = ymd.split("-").map(Number);
-    const dt = new Date(y, m-1, d, 0, 0, 0, 0);
-    return dt.toISOString();
+    return new Date(y, m-1, d, 0, 0, 0, 0).toISOString();
   }
   function ymdToLocalEndExclusiveISO(ymd){
     const [y,m,d] = ymd.split("-").map(Number);
-    const dt = new Date(y, m-1, d+1, 0, 0, 0, 0);
-    return dt.toISOString();
+    return new Date(y, m-1, d+1, 0, 0, 0, 0).toISOString();
+  }
+  function toISOFromYmdTime(ymd, hhmm){
+    const [y, m, d] = ymd.split("-").map(Number);
+    if (hhmm === "24:00") return new Date(y, m-1, d+1, 0,0,0,0).toISOString();
+    const [hh, mm] = hhmm.split(":").map(Number);
+    return new Date(y, m-1, d, hh, mm, 0, 0).toISOString();
   }
 
   function showNameModal(uid, last="", first=""){
@@ -192,6 +242,39 @@
   function hideNameModal(){
     $("nameOverlay").style.display = "none";
     editingUserId = null;
+  }
+
+  function showResvModal(r){
+    // r: { id, car_id, user_name, start_time, end_time, note }
+    editingResvId = r.id;
+    const s = new Date(r.start_time);
+    const e = new Date(r.end_time);
+    editingResvYmd = fmtYmd(s);
+
+    // 車セレクト
+    $("resvCar").innerHTML = Object.keys(carsMap).sort((a,b)=>Number(a)-Number(b)).map(id=>{
+      const name = carsMap[id];
+      const stop = (carsActiveMap[id] === false) ? "（点検中）" : "";
+      return `<option value="${id}" data-active="${carsActiveMap[id] === false ? "0":"1"}">${name}${stop}</option>`;
+    }).join("");
+    $("resvCar").value = String(r.car_id);
+
+    // 時刻セレクト
+    $("resvStart").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
+    $("resvEnd").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
+
+    $("resvStart").value = fmtHm(s);
+    $("resvEnd").value = fmtHm(e);
+    $("resvNote").value = r.note || "";
+
+    $("resvInfo").textContent = `利用者：${r.user_name || ""} / 日付：${editingResvYmd}`;
+    $("resvOverlay").style.display = "flex";
+  }
+
+  function hideResvModal(){
+    $("resvOverlay").style.display = "none";
+    editingResvId = null;
+    editingResvYmd = null;
   }
 
   async function initLiff(){
@@ -314,7 +397,11 @@
     if(error) throw error;
 
     carsMap = {};
-    (data||[]).forEach(c=>carsMap[c.id]=c.name);
+    carsActiveMap = {};
+    (data||[]).forEach(c=>{
+      carsMap[c.id]=c.name;
+      carsActiveMap[c.id] = (c.is_active !== false);
+    });
 
     // フィルタ
     const current = $("carFilter").value;
@@ -439,7 +526,7 @@
     $("reservationsBox").innerHTML = `
       <table>
         <thead>
-          <tr><th>車</th><th>日付</th><th>時間</th><th>利用者（クリックで編集）</th><th>用途</th></tr>
+          <tr><th>車</th><th>日付</th><th>時間（クリックで変更）</th><th>利用者（クリックで編集）</th><th>用途</th></tr>
         </thead>
         <tbody>
           ${data.map(r=>{
@@ -447,13 +534,23 @@
             const carName = carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`;
             const uname = r.user_name || "(未設定)";
             const uid = r.user_id || "";
+            const ymd = fmtYmd(s);
+            const t = `${fmtHm(s)}〜${fmtHm(e)}`;
+            const note = r.note || "";
             return `
               <tr>
                 <td>${carName}</td>
-                <td>${fmtYmd(s)}</td>
-                <td>${fmtHm(s)}〜${fmtHm(e)}</td>
+                <td>${ymd}</td>
+                <td><span class="timeLink" data-resv='${JSON.stringify({
+                  id: r.id,
+                  car_id: r.car_id,
+                  user_name: r.user_name || "",
+                  start_time: r.start_time,
+                  end_time: r.end_time,
+                  note: note
+                }).replaceAll("'","&#39;")}'>${t}</span></td>
                 <td><span class="userLink" data-uid="${uid}">${uname}</span></td>
-                <td>${r.note||""}</td>
+                <td>${note}</td>
               </tr>
             `;
           }).join("")}
@@ -461,6 +558,7 @@
       </table>
     `;
 
+    // 利用者名クリック：名前編集
     document.querySelectorAll(".userLink").forEach(el=>{
       el.addEventListener("click", async ()=>{
         const uid = el.getAttribute("data-uid");
@@ -482,6 +580,91 @@
         showNameModal(uid, data?.last_name||"", data?.first_name||"");
       });
     });
+
+    // 時間クリック：予約時間変更
+    document.querySelectorAll(".timeLink").forEach(el=>{
+      el.addEventListener("click", ()=>{
+        const raw = el.getAttribute("data-resv");
+        if(!raw) return;
+        try{
+          const r = JSON.parse(raw);
+          showResvModal(r);
+        }catch(e){
+          console.error(e);
+          alert("予約データの解析に失敗しました");
+        }
+      });
+    });
+  }
+
+  // ===== 予約時間変更 保存（管理者）=====
+  async function saveReservationEdit(){
+    if(!editingResvId || !editingResvYmd){
+      alert("編集中の予約がありません");
+      return;
+    }
+
+    const carSel = $("resvCar");
+    const carId = Number(carSel.value);
+
+    // 点検中は予約不可（管理者でも不可）
+    const isActive = (carSel.selectedOptions[0]?.dataset.active === "1");
+    if(!isActive){
+      alert("点検中の車は予約できません（別の車にしてください）");
+      return;
+    }
+
+    const startStr = $("resvStart").value;
+    const endStr = $("resvEnd").value;
+
+    const startISO = toISOFromYmdTime(editingResvYmd, startStr);
+    const endISO = toISOFromYmdTime(editingResvYmd, endStr);
+
+    if(new Date(startISO) >= new Date(endISO)){
+      alert("終了は開始より後にしてください。");
+      return;
+    }
+
+    // 重複チェック（自分自身は除外）
+    const { data: ov, error: ovErr } = await sb
+      .from("reservations")
+      .select("id")
+      .eq("car_id", carId)
+      .lt("start_time", endISO)
+      .gt("end_time", startISO)
+      .neq("id", editingResvId)
+      .limit(1);
+
+    if(ovErr){
+      console.error(ovErr);
+      alert("重複チェックに失敗しました");
+      return;
+    }
+    if((ov||[]).length > 0){
+      alert("その時間帯はすでに予約があります。");
+      return;
+    }
+
+    const note = ($("resvNote").value || "").trim();
+
+    $("resvSaveBtn").disabled = true;
+    try{
+      const { error } = await sb
+        .from("reservations")
+        .update({ car_id: carId, start_time: startISO, end_time: endISO, note })
+        .eq("id", editingResvId);
+
+      if(error) throw error;
+
+      alert("変更しました");
+      hideResvModal();
+      await loadReservations();
+    }catch(e){
+      console.error(e);
+      alert("変更に失敗しました（権限/RLS/カラムを確認）");
+    }finally{
+      $("resvSaveBtn").disabled = false;
+    }
   }
 
   // ===== CSV（期間指定のみ + 利用者検索も反映）=====
@@ -578,6 +761,10 @@
       $("saveNameBtn").disabled = false;
     }
   });
+
+  // ===== 予約編集モーダル ボタン =====
+  $("resvCancelBtn").addEventListener("click", hideResvModal);
+  $("resvSaveBtn").addEventListener("click", saveReservationEdit);
 
   // ===== UI =====
   function syncRangeBox(){
