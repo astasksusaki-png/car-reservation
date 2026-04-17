@@ -9,6 +9,7 @@
     body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;margin:12px;line-height:1.5;}
     h2{margin:0 0 8px 0;}
     h3{margin:16px 0 8px 0; font-size:16px;}
+    h4{margin:10px 0 6px 0; font-size:14px;}
     .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
     .pill{display:inline-block; padding:2px 8px; border-radius:999px; background:#f3f3f3; font-size:12px; color:#444;}
     #status{font-size:13px;color:#666;margin-bottom:10px;}
@@ -23,7 +24,6 @@
     .danger{color:#b00020; font-weight:700;}
     .userLink{ color:#0b57d0; text-decoration:underline; cursor:pointer; }
 
-    /* 時間セルをクリックできる見た目 */
     .timeLink{
       color:#0b57d0;
       text-decoration:underline;
@@ -61,6 +61,14 @@
     .tagStop{
       display:inline-block; padding:2px 8px; border-radius:999px;
       background:#ffe8e8; color:#b00020; font-size:12px; font-weight:700;
+    }
+    .tagHidden{
+      display:inline-block; padding:2px 8px; border-radius:999px;
+      background:#eee; color:#555; font-size:12px; font-weight:700;
+    }
+    .btnDelete{
+      background:#ffe8e8;
+      border:1px solid #f3bcbc;
     }
   </style>
 
@@ -135,10 +143,38 @@
     <div id="adminsBox" style="margin-top:10px;">読み込み中…</div>
   </div>
 
-  <!-- ✅ 車名編集＋使用停止（点検中） -->
+  <!-- ✅ 車追加＋車名編集＋点検中＋非表示＋削除 -->
   <div class="card" style="margin-top:12px;">
-    <h3 style="margin-top:0;">車名の編集／使用停止（点検中）</h3>
-    <div class="small muted">※ 使用停止にすると予約画面で「点検中」と表示され、予約不可になります</div>
+    <h3 style="margin-top:0;">車の管理</h3>
+    <div class="small muted">※ 車名変更、点検中、非表示、削除ができます</div>
+
+    <hr style="margin:12px 0;">
+
+    <h4>新しい車を追加</h4>
+    <div class="row" style="margin-bottom:10px;">
+      <input id="newCarName" type="text" placeholder="例：プリウス" style="flex:1; min-width:180px;">
+
+      <label class="small" style="display:flex; align-items:center; gap:6px;">
+        <input type="checkbox" id="newCarActive" checked>
+        使用可能
+      </label>
+
+      <label class="small" style="display:flex; align-items:center; gap:6px;">
+        <input type="checkbox" id="newCarHidden">
+        非表示
+      </label>
+
+      <button id="addCarBtn">追加</button>
+    </div>
+
+    <hr style="margin:12px 0;">
+
+    <h4>既存の車を編集</h4>
+    <div class="small muted" style="margin-bottom:8px;">
+      ・点検中：予約不可<br>
+      ・非表示：予約画面の車一覧に出さない<br>
+      ・削除：予約が残っている車は削除できないことがあります
+    </div>
     <div id="carsBox" style="margin-top:10px;">読み込み中…</div>
   </div>
 
@@ -192,7 +228,6 @@
   </div>
 
 <script>
-  // ✅ あなたの値
   const LIFF_ID = "2008829976-rJa7ANlR";
   const SUPABASE_URL = "https://jmobmcphzqxbybkqpwfd.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imptb2JtY3BoenF4Ynlia3Fwd2ZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc2NjkyMTMsImV4cCI6MjA4MzI0NTIxM30.TTaR9DKpCtkWa3RFB9zE7IydwhD9bWGIbp83YbUX8v8";
@@ -203,11 +238,11 @@
   const me = { userId:null, displayName:null };
   let carsMap = {};         // id -> name
   let carsActiveMap = {};   // id -> is_active(true/false)
+  let carsHiddenMap = {};   // id -> is_hidden(true/false)
   let editingUserId = null;
 
-  // 予約編集
   let editingResvId = null;
-  let editingResvYmd = null; // 開始日基準の日付（YYYY-MM-DD）
+  let editingResvYmd = null;
   const pad = (n)=>String(n).padStart(2,"0");
   const fmtYmd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
   const fmtHm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -245,21 +280,19 @@
   }
 
   function showResvModal(r){
-    // r: { id, car_id, user_name, start_time, end_time, note }
     editingResvId = r.id;
     const s = new Date(r.start_time);
     const e = new Date(r.end_time);
     editingResvYmd = fmtYmd(s);
 
-    // 車セレクト
     $("resvCar").innerHTML = Object.keys(carsMap).sort((a,b)=>Number(a)-Number(b)).map(id=>{
       const name = carsMap[id];
       const stop = (carsActiveMap[id] === false) ? "（点検中）" : "";
-      return `<option value="${id}" data-active="${carsActiveMap[id] === false ? "0":"1"}">${name}${stop}</option>`;
+      const hidden = (carsHiddenMap[id] === true) ? "（非表示）" : "";
+      return `<option value="${id}" data-active="${carsActiveMap[id] === false ? "0":"1"}">${name}${stop}${hidden}</option>`;
     }).join("");
-    $("resvCar").value = String(r.car_id);
 
-    // 時刻セレクト
+    $("resvCar").value = String(r.car_id);
     $("resvStart").innerHTML = TIMES.map(t=>`<option value="${t}">${t}</option>`).join("");
     $("resvEnd").innerHTML = [...TIMES,"24:00"].map(t=>`<option value="${t}">${t}</option>`).join("");
 
@@ -310,7 +343,6 @@
     }
   }
 
-  // ===== 管理者一覧 =====
   async function loadAdmins(){
     const { data, error } = await sb.from("admins").select("user_id").order("user_id");
     if(error){
@@ -337,9 +369,7 @@
                   ${r.user_id} ${isMe ? '<span class="pill">自分</span>' : ''}
                 </td>
                 <td>
-                  <button data-del-admin="${r.user_id}" ${isMe ? "disabled" : ""}>
-                    削除
-                  </button>
+                  <button data-del-admin="${r.user_id}" ${isMe ? "disabled" : ""}>削除</button>
                 </td>
               </tr>
             `;
@@ -391,6 +421,42 @@
     }
   }
 
+  // ===== 車追加 =====
+  async function addCar(){
+    const name = ($("newCarName").value || "").trim();
+    const isActive = $("newCarActive").checked;
+    const isHidden = $("newCarHidden").checked;
+
+    if(!name){
+      alert("車名を入力してください");
+      return;
+    }
+
+    $("addCarBtn").disabled = true;
+    try{
+      const { error } = await sb.from("cars").insert({
+        name: name,
+        is_active: isActive,
+        is_hidden: isHidden
+      });
+
+      if(error) throw error;
+
+      $("newCarName").value = "";
+      $("newCarActive").checked = true;
+      $("newCarHidden").checked = false;
+
+      alert("車を追加しました");
+      await loadCars();
+      await loadReservations();
+    }catch(e){
+      console.error(e);
+      alert("追加に失敗しました（RLS / カラムを確認）");
+    }finally{
+      $("addCarBtn").disabled = false;
+    }
+  }
+
   // ===== 車 =====
   async function loadCars(){
     const { data, error } = await sb.from("cars").select("*").order("id");
@@ -398,38 +464,47 @@
 
     carsMap = {};
     carsActiveMap = {};
+    carsHiddenMap = {};
     (data||[]).forEach(c=>{
-      carsMap[c.id]=c.name;
+      carsMap[c.id] = c.name;
       carsActiveMap[c.id] = (c.is_active !== false);
+      carsHiddenMap[c.id] = (c.is_hidden === true);
     });
 
-    // フィルタ
     const current = $("carFilter").value;
     $("carFilter").innerHTML =
       `<option value="all">全車</option>` +
       (data||[]).map(c=>{
         const stop = (c.is_active === false) ? "（点検中）" : "";
-        return `<option value="${c.id}">${c.name}${stop}</option>`;
+        const hidden = (c.is_hidden === true) ? "（非表示）" : "";
+        return `<option value="${c.id}">${c.name}${stop}${hidden}</option>`;
       }).join("");
     if(current) $("carFilter").value = current;
 
-    // 車編集 + 使用停止
     $("carsBox").innerHTML = (data||[]).map(c=>{
       const isStop = (c.is_active === false);
+      const isHidden = (c.is_hidden === true);
+
       return `
         <div class="row" style="align-items:center;">
           <span class="pill">ID:${c.id}</span>
           ${isStop ? `<span class="tagStop">点検中</span>` : ``}
+          ${isHidden ? `<span class="tagHidden">非表示</span>` : ``}
 
-          <input id="carName_${c.id}" value="${String(c.name||"").replaceAll('"','&quot;')}"
-                 style="flex:1; min-width:180px;">
+          <input id="carName_${c.id}" value="${String(c.name||"").replaceAll('"','&quot;')}" style="flex:1; min-width:180px;">
 
           <label class="small" style="display:flex; align-items:center; gap:6px;">
             <input type="checkbox" id="carStop_${c.id}" ${isStop ? "checked" : ""}>
-            使用停止（点検中）
+            点検中
+          </label>
+
+          <label class="small" style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="carHide_${c.id}" ${isHidden ? "checked" : ""}>
+            非表示
           </label>
 
           <button data-save-car="${c.id}">保存</button>
+          <button data-del-car="${c.id}" class="btnDelete">削除</button>
         </div>
       `;
     }).join("");
@@ -438,7 +513,8 @@
       btn.onclick = async ()=>{
         const id = Number(btn.dataset.saveCar);
         const name = ($("carName_"+id).value || "").trim();
-        const stop = $("carStop_"+id).checked; // trueなら点検中
+        const stop = $("carStop_"+id).checked;
+        const hide = $("carHide_"+id).checked;
 
         if(!name){
           alert("車名を入力してください");
@@ -448,8 +524,9 @@
         btn.disabled = true;
         try{
           const { error } = await sb.from("cars")
-            .update({ name, is_active: !stop })
+            .update({ name, is_active: !stop, is_hidden: hide })
             .eq("id", id);
+
           if(error) throw error;
 
           await loadCars();
@@ -457,7 +534,31 @@
           alert("保存しました");
         }catch(e){
           console.error(e);
-          alert("保存に失敗しました（cars.is_active カラムを確認）");
+          alert("保存に失敗しました（cars のカラムを確認）");
+        }finally{
+          btn.disabled = false;
+        }
+      };
+    });
+
+    document.querySelectorAll("button[data-del-car]").forEach(btn=>{
+      btn.onclick = async ()=>{
+        const id = Number(btn.dataset.delCar);
+        const name = ($("carName_"+id)?.value || "").trim();
+
+        if(!confirm(`この車を削除しますか？\nID:${id}\n車名：${name}\n\n※予約データが残っていると削除できないことがあります。`)) return;
+
+        btn.disabled = true;
+        try{
+          const { error } = await sb.from("cars").delete().eq("id", id);
+          if(error) throw error;
+
+          alert("削除しました");
+          await loadCars();
+          await loadReservations();
+        }catch(e){
+          console.error(e);
+          alert("削除に失敗しました。\n予約データが残っている可能性があります。\nその場合は「非表示」で運用してください。");
         }finally{
           btn.disabled = false;
         }
@@ -465,7 +566,6 @@
     });
   }
 
-  // ===== 予約一覧 =====
   function getFilterParams(){
     const car = $("carFilter").value;
     const mode = $("modeFilter").value;
@@ -530,25 +630,28 @@
         </thead>
         <tbody>
           ${data.map(r=>{
-            const s=new Date(r.start_time), e=new Date(r.end_time);
+            const s = new Date(r.start_time), e = new Date(r.end_time);
             const carName = carsMap?.[Number(r.car_id)] ?? `車ID:${r.car_id}`;
             const uname = r.user_name || "(未設定)";
             const uid = r.user_id || "";
             const ymd = fmtYmd(s);
             const t = `${fmtHm(s)}〜${fmtHm(e)}`;
             const note = r.note || "";
+
+            const payload = JSON.stringify({
+              id: r.id,
+              car_id: r.car_id,
+              user_name: r.user_name || "",
+              start_time: r.start_time,
+              end_time: r.end_time,
+              note: note
+            }).replaceAll("'", "&#39;");
+
             return `
               <tr>
                 <td>${carName}</td>
                 <td>${ymd}</td>
-                <td><span class="timeLink" data-resv='${JSON.stringify({
-                  id: r.id,
-                  car_id: r.car_id,
-                  user_name: r.user_name || "",
-                  start_time: r.start_time,
-                  end_time: r.end_time,
-                  note: note
-                }).replaceAll("'","&#39;")}'>${t}</span></td>
+                <td><span class="timeLink" data-resv='${payload}'>${t}</span></td>
                 <td><span class="userLink" data-uid="${uid}">${uname}</span></td>
                 <td>${note}</td>
               </tr>
@@ -558,7 +661,6 @@
       </table>
     `;
 
-    // 利用者名クリック：名前編集
     document.querySelectorAll(".userLink").forEach(el=>{
       el.addEventListener("click", async ()=>{
         const uid = el.getAttribute("data-uid");
@@ -581,7 +683,6 @@
       });
     });
 
-    // 時間クリック：予約時間変更
     document.querySelectorAll(".timeLink").forEach(el=>{
       el.addEventListener("click", ()=>{
         const raw = el.getAttribute("data-resv");
@@ -597,7 +698,6 @@
     });
   }
 
-  // ===== 予約時間変更 保存（管理者）=====
   async function saveReservationEdit(){
     if(!editingResvId || !editingResvYmd){
       alert("編集中の予約がありません");
@@ -607,7 +707,6 @@
     const carSel = $("resvCar");
     const carId = Number(carSel.value);
 
-    // 点検中は予約不可（管理者でも不可）
     const isActive = (carSel.selectedOptions[0]?.dataset.active === "1");
     if(!isActive){
       alert("点検中の車は予約できません（別の車にしてください）");
@@ -625,7 +724,6 @@
       return;
     }
 
-    // 重複チェック（自分自身は除外）
     const { data: ov, error: ovErr } = await sb
       .from("reservations")
       .select("id")
@@ -667,7 +765,6 @@
     }
   }
 
-  // ===== CSV（期間指定のみ + 利用者検索も反映）=====
   function csvEscape(v){
     const s = String(v ?? "");
     if(/[",\n\r]/.test(s)) return `"${s.replaceAll('"','""')}"`;
@@ -733,7 +830,6 @@
     downloadTextFile(`社用車予約_${carPart}${namePart}_${sYmd}〜${eYmd}.csv`, csv);
   }
 
-  // ===== 名前保存（users + reservations.user_name を一括更新）=====
   $("cancelNameBtn").addEventListener("click", hideNameModal);
   $("saveNameBtn").addEventListener("click", async ()=>{
     if(!editingUserId) return;
@@ -762,11 +858,9 @@
     }
   });
 
-  // ===== 予約編集モーダル ボタン =====
   $("resvCancelBtn").addEventListener("click", hideResvModal);
   $("resvSaveBtn").addEventListener("click", saveReservationEdit);
 
-  // ===== UI =====
   function syncRangeBox(){
     $("rangeBox").style.display = ($("modeFilter").value === "range") ? "flex" : "none";
   }
@@ -792,13 +886,16 @@
   });
 
   $("downloadCsvBtn").onclick = downloadCsv;
-
   $("addAdminBtn").onclick = addAdmin;
+  $("addCarBtn").onclick = addCar;
+
   $("newAdminUserId").addEventListener("keydown",(e)=>{
     if(e.key==="Enter") addAdmin();
   });
+  $("newCarName").addEventListener("keydown",(e)=>{
+    if(e.key==="Enter") addCar();
+  });
 
-  // 起動
   (async()=>{
     try{
       await initLiff();
